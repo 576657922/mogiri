@@ -1,0 +1,19 @@
+{
+  "type": "concert",
+  "decision": "cloud-text",
+  "fields": {
+    "eventAt": "2026-11-09T18:00",
+    "seat": "1階 Bブロック 3列 15番",
+    "venue": "日本武道館",
+    "price": {
+      "amount": 9800,
+      "currency": "JPY"
+    },
+    "details.doorsAt": "17:00",
+    "details.entryNo": "A123"
+  },
+  "bestEffort": {
+    "title": "LIVE TOUR 2026 \"AURORA\""
+  },
+  "sensitive": ["name", "booking_ref"]
+}

@@ -1,0 +1,17 @@
+{
+  "type": "movie",
+  "decision": "done",
+  "fields": {
+    "title": "星际旅人 重映版",
+    "eventAt": "2026-11-09T19:30",
+    "seat": "5排08座",
+    "price": {
+      "amount": 45,
+      "currency": "CNY"
+    },
+    "venue": "万达影城(北京CBD店)",
+    "details.screen": "3号厅",
+    "details.format": "IMAX"
+  },
+  "sensitive": ["booking_ref"]
+}

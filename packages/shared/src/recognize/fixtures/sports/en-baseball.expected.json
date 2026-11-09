@@ -1,0 +1,17 @@
+{
+  "type": "sports",
+  "decision": "done",
+  "fields": {
+    "title": "SEATTLE MARINERS vs NEW YORK YANKEES",
+    "eventAt": "2026-11-08T19:10",
+    "seat": "SEC 128 ROW 12 SEAT 5",
+    "price": {
+      "amount": 45,
+      "currency": "USD"
+    },
+    "venue": "T-MOBILE PARK",
+    "details.home": "SEATTLE MARINERS",
+    "details.away": "NEW YORK YANKEES"
+  },
+  "sensitive": ["booking_ref"]
+}

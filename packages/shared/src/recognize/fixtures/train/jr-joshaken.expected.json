@@ -1,0 +1,14 @@
+{
+  "type": "train",
+  "decision": "done",
+  "fields": {
+    "title": "東京都区内→横浜",
+    "eventAt": "2026-11-09",
+    "price": {
+      "amount": 480,
+      "currency": "JPY"
+    },
+    "details.from": "東京都区内",
+    "details.to": "横浜"
+  }
+}

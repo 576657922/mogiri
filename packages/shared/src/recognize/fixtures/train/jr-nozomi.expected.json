@@ -1,0 +1,23 @@
+{
+  "type": "train",
+  "decision": "done",
+  "fields": {
+    "title": "のぞみ 123号 東京→新大阪",
+    "eventAt": "2026-11-09T18:30",
+    "seat": "12番A席",
+    "price": {
+      "amount": 14720,
+      "currency": "JPY"
+    },
+    "timezone": "Asia/Tokyo",
+    "details.trainName": "のぞみ 123号",
+    "details.from": "東京",
+    "details.to": "新大阪",
+    "details.car": "5",
+    "details.seatClass": "指定席",
+    "details.operator": "JR東海"
+  },
+  "bestEffort": {
+    "subtitle": "乗車券・新幹線特急券"
+  }
+}

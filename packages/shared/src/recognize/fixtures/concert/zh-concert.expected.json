@@ -1,0 +1,18 @@
+{
+  "type": "concert",
+  "decision": "cloud-text",
+  "fields": {
+    "eventAt": "2026-11-09T19:30",
+    "seat": "C区 12排 8号",
+    "venue": "国家体育场(鸟巢)",
+    "price": {
+      "amount": 880,
+      "currency": "CNY"
+    },
+    "details.doorsAt": "18:00"
+  },
+  "bestEffort": {
+    "title": "2026 星河巡回演唱会 北京站"
+  },
+  "sensitive": ["booking_ref"]
+}

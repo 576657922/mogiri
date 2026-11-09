@@ -1,0 +1,17 @@
+{
+  "type": "exhibition",
+  "decision": "cloud-text",
+  "fields": {
+    "eventAt": "2026-11-09T10:00",
+    "price": {
+      "amount": 15000,
+      "currency": "KRW"
+    },
+    "venue": "국립중앙박물관",
+    "details.museum": "국립중앙박물관"
+  },
+  "bestEffort": {
+    "title": "특별전 「빛의 정원」"
+  },
+  "sensitive": ["booking_ref"]
+}

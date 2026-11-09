@@ -1,0 +1,17 @@
+{
+  "type": "flight",
+  "decision": "done",
+  "fields": {
+    "title": "NH23 HND→ITM",
+    "eventAt": "2026-11-09T18:30",
+    "seat": "12A",
+    "details.flightNo": "NH23",
+    "details.airline": "NH",
+    "details.from": "HND",
+    "details.to": "ITM",
+    "details.gate": "62",
+    "details.boardingTime": "18:05",
+    "details.cabin": "Y"
+  },
+  "sensitive": ["name", "booking_ref", "barcode"]
+}

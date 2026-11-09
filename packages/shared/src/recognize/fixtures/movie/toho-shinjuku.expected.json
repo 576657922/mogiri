@@ -1,0 +1,16 @@
+{
+  "type": "movie",
+  "decision": "done",
+  "fields": {
+    "title": "劇場版 星降る夜のメロディ",
+    "eventAt": "2026-11-08T18:30",
+    "venue": "TOHOシネマズ 新宿",
+    "seat": "F-12",
+    "price": {
+      "amount": 2000,
+      "currency": "JPY"
+    },
+    "details.cinema": "TOHOシネマズ 新宿",
+    "details.screen": "スクリーン5"
+  }
+}
