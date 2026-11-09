@@ -2,7 +2,6 @@ import { type MaterialName, renderThumbnailDataUrl } from '@mogiri/renderer';
 import { MATERIALS, TICKET_TYPES, type TicketType } from '@mogiri/shared';
 import { useNavigate } from '@tanstack/react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { AlertTriangle, Check, ImagePlus, Save, Sparkles, Trash2, X } from 'lucide-react';
 import type React from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -23,8 +22,8 @@ import {
   toTicketSpec,
 } from '../../domain';
 import { dataUrlToBlob, getDefaultTimezone, readFileAsDataUrl } from '../../platform';
+import { Btn, btnClass, Container, Field, Label, SectionHead, ticketTypeCode } from '../../ui';
 
-/** 每种票型对应的专属扩展字段 key 列表（见 02-architecture §7.1） */
 const EXT_FIELDS_BY_TYPE: Record<TicketType, readonly string[]> = {
   flight: ['airline', 'flightNo', 'from', 'to', 'gate', 'cabin', 'boardingTime'],
   train: ['operator', 'trainName', 'from', 'to', 'car', 'seatClass'],
@@ -106,7 +105,6 @@ export const TicketFormView: React.FC<TicketFormViewProps> = ({
   const [previewUrl, setPreviewUrl] = useState<string>('');
   const [saving, setSaving] = useState(false);
 
-  // 当 initialDraft 更新时（例如在确认页点击了「模拟 AI 文字增强」），同步表单字段
   useEffect(() => {
     if (!initialDraft) return;
     const inp = initialDraft.input;
@@ -125,7 +123,6 @@ export const TicketFormView: React.FC<TicketFormViewProps> = ({
     setMaterial(inp.material);
   }, [initialDraft]);
 
-  // 编辑已有票据时回填数据
   useEffect(() => {
     if (!existingTicket) return;
     setType(existingTicket.type);
@@ -160,7 +157,6 @@ export const TicketFormView: React.FC<TicketFormViewProps> = ({
     }
   }, [existingTicket]);
 
-  // 实时生成预览缩略图
   const tempRecord = useMemo<TicketRecord>(() => {
     const parsedPrice = Number(priceAmountStr);
     const parsedLat = Number(latStr);
@@ -168,7 +164,7 @@ export const TicketFormView: React.FC<TicketFormViewProps> = ({
     return {
       id: existingTicket?.id ?? 'preview',
       type,
-      title: title.trim() || 'Sample Ticket',
+      title: title.trim() || 'STARLIGHT PARADE',
       ...(subtitle.trim() ? { subtitle: subtitle.trim() } : {}),
       eventAt: /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2})?$/.test(eventAt.trim())
         ? eventAt.trim()
@@ -236,7 +232,7 @@ export const TicketFormView: React.FC<TicketFormViewProps> = ({
         }
         if (cancelled) return;
         const spec = toTicketSpec(tempRecord, faceImage ? { faceImage } : undefined);
-        const url = renderThumbnailDataUrl(spec, 560);
+        const url = renderThumbnailDataUrl(spec, 640);
         if (!cancelled) setPreviewUrl(url);
       } catch {
         // 忽略图片未就绪时的临时错误
@@ -254,20 +250,19 @@ export const TicketFormView: React.FC<TicketFormViewProps> = ({
     }
   };
 
-  const renderLowConfidenceBadge = (fieldKey: string) => {
+  const renderLowBadge = (fieldKey: string) => {
     if (!initialDraft) return null;
     if (!initialDraft.lowConfidenceKeys.includes(fieldKey)) return null;
     const conf = initialDraft.confidences[fieldKey] ?? 0;
     const pct = Math.round(conf * 100);
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/20 px-2 py-0.5 text-[11px] font-medium text-amber-300 border border-amber-500/30">
-        <AlertTriangle className="h-3 w-3" />
-        {t('form.lowConfidenceHint', { pct })}
+      <span className="border border-accent px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-accent">
+        {t('form.lowConfidence', { pct })}
       </span>
     );
   };
 
-  const isFieldLowConfidence = (fieldKey: string): boolean =>
+  const isLow = (fieldKey: string): boolean =>
     Boolean(initialDraft?.lowConfidenceKeys.includes(fieldKey));
 
   const handleUploadScanFront = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -318,7 +313,7 @@ export const TicketFormView: React.FC<TicketFormViewProps> = ({
         },
         faceImage ? { faceImage } : undefined,
       );
-      const thumbDataUrl = renderThumbnailDataUrl(specForThumb, 520);
+      const thumbDataUrl = renderThumbnailDataUrl(specForThumb, 640);
 
       const source: TicketSource = existingTicket?.source ?? initialDraft?.input.source ?? 'manual';
 
@@ -379,429 +374,433 @@ export const TicketFormView: React.FC<TicketFormViewProps> = ({
   };
 
   const extFields = EXT_FIELDS_BY_TYPE[type];
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-6 pb-8">
+  const content = (
+    <form onSubmit={handleSubmit} className="space-y-12">
       {!initialDraft && (
-        <div className="flex items-center justify-between">
-          <h1 className="text-xl font-bold text-stone-100">
-            {existingTicket ? t('form.editTitle') : t('form.createTitle')}
-          </h1>
-          <button
-            type="button"
+        <div className="flex flex-wrap items-end justify-between gap-4 border-b border-line pb-6">
+          <div className="space-y-2">
+            <Label index={existingTicket ? 'EDIT' : 'NEW'}>
+              {existingTicket ? t('form.eyebrowEdit') : t('form.eyebrowNew')}
+            </Label>
+            <h1 className="display text-4xl sm:text-5xl text-fg">
+              {existingTicket ? t('form.editTitle') : t('form.createTitle')}
+            </h1>
+          </div>
+
+          <Btn
+            variant="outline"
             onClick={() =>
               existingTicket
                 ? void navigate({ to: '/t/$id', params: { id: existingTicket.id } })
                 : void navigate({ to: '/' })
             }
-            className="inline-flex items-center gap-1.5 rounded-lg border border-stone-800 bg-stone-900 px-3 py-1.5 text-xs text-stone-400 hover:text-stone-200"
           >
-            <X className="h-3.5 w-3.5" />
             {t('form.cancel')}
-          </button>
+          </Btn>
         </div>
       )}
 
-      {/* 顶部实时票面预览 */}
-      <div className="rounded-2xl border border-stone-800/80 bg-stone-900/60 p-4 flex flex-col items-center gap-3">
-        {previewUrl && (
-          <img
-            src={previewUrl}
-            alt={title || 'Preview'}
-            className="max-h-52 w-auto object-contain drop-shadow-[0_14px_24px_rgba(0,0,0,0.65)]"
-          />
-        )}
-        <div className="flex flex-wrap items-center justify-center gap-2">
-          <label className="cursor-pointer inline-flex items-center gap-1.5 rounded-lg border border-stone-700 bg-stone-800/80 px-3 py-1.5 text-xs font-medium text-stone-200 hover:border-amber-500/50">
-            <ImagePlus className="h-3.5 w-3.5 text-amber-400" />
-            {t('form.uploadScanFront')}
-            <input
-              type="file"
-              accept="image/*"
-              onChange={handleUploadScanFront}
-              className="hidden"
-            />
-          </label>
-          {scanDataUrl && (
-            <button
-              type="button"
-              onClick={() => setScanDataUrl(undefined)}
-              className="inline-flex items-center gap-1 rounded-lg border border-stone-700 bg-stone-900 px-3 py-1.5 text-xs text-stone-400 hover:text-rose-300"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              {t('form.clearScanFront')}
-            </button>
+      {/* 双栏排版：左侧常驻实时打样台，右侧分章表单 */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-start">
+        {/* 左栏：实时票面打样（Live Proof） */}
+        <div className="lg:col-span-5 lg:sticky lg:top-24 space-y-4">
+          <div className="flex items-center justify-between">
+            <Label index="PROOF">{t('form.preview')}</Label>
+            <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted">
+              {ticketTypeCode(type)} · {t(`materials.${material}`)}
+            </span>
+          </div>
+
+          <div className="cropmarks border border-line bg-bg-raised/70 p-6 sm:p-8 flex flex-col items-center justify-center min-h-[260px]">
+            {previewUrl && (
+              <img
+                src={previewUrl}
+                alt={title || 'Ticket proof'}
+                className="max-h-56 w-auto object-contain stub-shadow"
+              />
+            )}
+          </div>
+
+          <p className="text-xs text-muted">{t('form.previewHint')}</p>
+
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <label className={`${btnClass('outline', 'h-9 px-4 text-xs')} cursor-pointer`}>
+              <span>{scanDataUrl ? t('form.replaceScan') : t('form.uploadScan')}</span>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleUploadScanFront}
+                className="hidden"
+              />
+            </label>
+            {scanDataUrl && (
+              <Btn
+                variant="ghost"
+                className="h-9 px-3 text-xs text-accent"
+                onClick={() => setScanDataUrl(undefined)}
+              >
+                {t('form.clearScan')}
+              </Btn>
+            )}
+          </div>
+
+          {initialDraft && initialDraft.lowConfidenceKeys.length > 0 && (
+            <div className="border-l-2 border-accent pl-3.5 py-1 text-xs text-accent">
+              {t('form.lowConfidenceHint')}
+            </div>
           )}
         </div>
-      </div>
 
-      {/* 1. 基本信息 */}
-      <section className="rounded-2xl border border-stone-800/80 bg-stone-900/40 p-5 space-y-4">
-        <h2 className="text-sm font-semibold text-stone-200">{t('form.basicSection')}</h2>
+        {/* 右栏：四章编辑表单 */}
+        <div className="lg:col-span-7 space-y-14">
+          {/* 01 基本信息 */}
+          <section className="space-y-6">
+            <SectionHead index="01" title={t('form.s1')} />
 
-        {/* 8 种票型选择 */}
-        <div>
-          <div className="block text-xs text-stone-400 mb-2">{t('form.type')}</div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {TICKET_TYPES.map((tk) => (
-              <button
-                key={tk}
-                type="button"
-                onClick={() => handleTypeChange(tk)}
-                className={`rounded-xl border px-3 py-2 text-xs font-medium transition text-left flex items-center justify-between ${
-                  type === tk
-                    ? 'border-amber-500/60 bg-amber-500/15 text-amber-300'
-                    : 'border-stone-800 bg-stone-950/60 text-stone-400 hover:text-stone-200'
-                }`}
-              >
-                <span>{t(`types.${tk}`)}</span>
-                {type === tk && <Check className="h-3.5 w-3.5 text-amber-400" />}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="sm:col-span-2">
-            <div className="flex items-center justify-between mb-1">
-              <label htmlFor="field-title" className="text-xs text-stone-400">
-                {t('form.title')}
-              </label>
-              {renderLowConfidenceBadge('title')}
-            </div>
-            <input
-              id="field-title"
-              type="text"
-              required
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className={`w-full rounded-xl border px-3 py-2 text-sm text-stone-100 focus:outline-none ${
-                isFieldLowConfidence('title')
-                  ? 'border-amber-500/70 bg-amber-500/10 focus:border-amber-400'
-                  : 'border-stone-800 bg-stone-950 focus:border-amber-500/50'
-              }`}
-            />
-          </div>
-
-          <div className="sm:col-span-2">
-            <label htmlFor="field-subtitle" className="block text-xs text-stone-400 mb-1">
-              {t('form.subtitle')}
-            </label>
-            <input
-              id="field-subtitle"
-              type="text"
-              value={subtitle}
-              onChange={(e) => setSubtitle(e.target.value)}
-              className="w-full rounded-xl border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-100 focus:border-amber-500/50 focus:outline-none"
-            />
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label htmlFor="field-eventAt" className="text-xs text-stone-400">
-                {t('form.eventAt')}
-              </label>
-              {renderLowConfidenceBadge('eventAt')}
-            </div>
-            <input
-              id="field-eventAt"
-              type="text"
-              required
-              placeholder="2026-11-09T19:00"
-              value={eventAt}
-              onChange={(e) => setEventAt(e.target.value)}
-              className={`w-full rounded-xl border px-3 py-2 text-sm font-mono text-stone-100 focus:outline-none ${
-                isFieldLowConfidence('eventAt')
-                  ? 'border-amber-500/70 bg-amber-500/10 focus:border-amber-400'
-                  : 'border-stone-800 bg-stone-950 focus:border-amber-500/50'
-              }`}
-            />
-          </div>
-
-          <div>
-            <label htmlFor="field-eventTz" className="block text-xs text-stone-400 mb-1">
-              {t('form.eventTz')}
-            </label>
-            <input
-              id="field-eventTz"
-              type="text"
-              required
-              placeholder="Asia/Tokyo"
-              value={eventTz}
-              onChange={(e) => setEventTz(e.target.value)}
-              className="w-full rounded-xl border border-stone-800 bg-stone-950 px-3 py-2 text-sm font-mono text-stone-100 focus:border-amber-500/50 focus:outline-none"
-            />
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label htmlFor="field-venueName" className="text-xs text-stone-400">
-                {t('form.venueName')}
-              </label>
-              {renderLowConfidenceBadge('venueName')}
-            </div>
-            <input
-              id="field-venueName"
-              type="text"
-              value={venueName}
-              onChange={(e) => setVenueName(e.target.value)}
-              className="w-full rounded-xl border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-100 focus:border-amber-500/50 focus:outline-none"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label htmlFor="field-city" className="block text-xs text-stone-400 mb-1">
-                {t('form.city')}
-              </label>
-              <input
-                id="field-city"
-                type="text"
-                value={city}
-                onChange={(e) => setCity(e.target.value)}
-                className="w-full rounded-xl border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-100 focus:border-amber-500/50 focus:outline-none"
-              />
-            </div>
-            <div>
-              <label htmlFor="field-country" className="block text-xs text-stone-400 mb-1">
-                {t('form.country')}
-              </label>
-              <input
-                id="field-country"
-                type="text"
-                value={country}
-                onChange={(e) => setCountry(e.target.value)}
-                className="w-full rounded-xl border border-stone-800 bg-stone-950 px-3 py-2 text-sm font-mono text-stone-100 focus:border-amber-500/50 focus:outline-none"
-              />
-            </div>
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label htmlFor="field-seat" className="text-xs text-stone-400">
-                {t('form.seat')}
-              </label>
-              {renderLowConfidenceBadge('seat')}
-            </div>
-            <input
-              id="field-seat"
-              type="text"
-              value={seat}
-              onChange={(e) => setSeat(e.target.value)}
-              className="w-full rounded-xl border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-100 focus:border-amber-500/50 focus:outline-none"
-            />
-          </div>
-
-          <div className="grid grid-cols-3 gap-2">
-            <div className="col-span-2">
-              <div className="flex items-center justify-between mb-1">
-                <label htmlFor="field-price" className="text-xs text-stone-400">
-                  {t('form.priceAmount')}
-                </label>
-                {renderLowConfidenceBadge('price')}
+            <div className="space-y-2.5">
+              <div className="label">{t('form.type')}</div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {TICKET_TYPES.map((tk) => {
+                  const active = type === tk;
+                  return (
+                    <button
+                      key={tk}
+                      type="button"
+                      onClick={() => handleTypeChange(tk)}
+                      className={`border px-3.5 py-2.5 text-left transition-colors flex items-baseline justify-between gap-2 ${
+                        active
+                          ? 'border-fg bg-fg text-bg'
+                          : 'border-line hover:border-fg text-fg bg-bg-raised/40'
+                      }`}
+                    >
+                      <span className="text-xs font-medium">{t(`types.${tk}`)}</span>
+                      <span
+                        className={`font-mono text-[10px] tracking-[0.12em] ${
+                          active ? 'text-bg/80' : 'text-muted'
+                        }`}
+                      >
+                        {ticketTypeCode(tk)}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
-              <input
-                id="field-price"
-                type="number"
-                step="any"
-                value={priceAmountStr}
-                onChange={(e) => setPriceAmountStr(e.target.value)}
-                className="w-full rounded-xl border border-stone-800 bg-stone-950 px-3 py-2 text-sm font-mono text-stone-100 focus:border-amber-500/50 focus:outline-none"
-              />
             </div>
-            <div>
-              <label htmlFor="field-currency" className="block text-xs text-stone-400 mb-1">
-                {t('form.priceCurrency')}
-              </label>
-              <input
-                id="field-currency"
-                type="text"
-                value={priceCurrency}
-                onChange={(e) => setPriceCurrency(e.target.value.toUpperCase())}
-                className="w-full rounded-xl border border-stone-800 bg-stone-950 px-3 py-2 text-sm font-mono text-stone-100 focus:border-amber-500/50 focus:outline-none"
-              />
-            </div>
-          </div>
 
-          <div>
-            <label htmlFor="field-lat" className="block text-xs text-stone-400 mb-1">
-              {t('form.lat')}
-            </label>
-            <input
-              id="field-lat"
-              type="number"
-              step="any"
-              placeholder="35.7056"
-              value={latStr}
-              onChange={(e) => setLatStr(e.target.value)}
-              className="w-full rounded-xl border border-stone-800 bg-stone-950 px-3 py-2 text-sm font-mono text-stone-100 focus:border-amber-500/50 focus:outline-none"
-            />
-          </div>
-
-          <div>
-            <label htmlFor="field-lng" className="block text-xs text-stone-400 mb-1">
-              {t('form.lng')}
-            </label>
-            <input
-              id="field-lng"
-              type="number"
-              step="any"
-              placeholder="139.7519"
-              value={lngStr}
-              onChange={(e) => setLngStr(e.target.value)}
-              className="w-full rounded-xl border border-stone-800 bg-stone-950 px-3 py-2 text-sm font-mono text-stone-100 focus:border-amber-500/50 focus:outline-none"
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* 2. 票型专属扩展字段 */}
-      {extFields.length > 0 && (
-        <section className="rounded-2xl border border-stone-800/80 bg-stone-900/40 p-5 space-y-4">
-          <h2 className="text-sm font-semibold text-stone-200">
-            {t('form.detailsSection')} · {t(`types.${type}`)}
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {extFields.map((key) => (
-              <div key={key}>
-                <div className="flex items-center justify-between mb-1">
-                  <label htmlFor={`ext-${key}`} className="text-xs text-stone-400">
-                    {t(`form.ext.${key}`)}
-                  </label>
-                  {renderLowConfidenceBadge(`details.${key}`)}
-                </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-6">
+              <Field
+                className="sm:col-span-2"
+                label={t('form.title')}
+                htmlFor="field-title"
+                badge={renderLowBadge('title')}
+              >
                 <input
-                  id={`ext-${key}`}
+                  id="field-title"
                   type="text"
-                  value={details[key] ?? ''}
-                  onChange={(e) => setDetails((prev) => ({ ...prev, [key]: e.target.value }))}
-                  className="w-full rounded-xl border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-100 focus:border-amber-500/50 focus:outline-none"
+                  required
+                  placeholder={t('form.titlePlaceholder')}
+                  value={title}
+                  data-low={isLow('title')}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="field text-lg font-medium"
                 />
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
+              </Field>
 
-      {/* 3. 纸张与工艺材质 */}
-      <section className="rounded-2xl border border-stone-800/80 bg-stone-900/40 p-5 space-y-4">
-        <h2 className="text-sm font-semibold text-stone-200 flex items-center gap-1.5">
-          <Sparkles className="h-4 w-4 text-amber-400" />
-          {t('form.appearanceSection')}
-        </h2>
-        <div>
-          <div className="block text-xs text-stone-400 mb-2">{t('form.material')}</div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-            {MATERIALS.map((mat) => (
-              <button
-                key={mat}
-                type="button"
-                onClick={() => setMaterial(mat)}
-                className={`rounded-xl border px-3 py-2 text-xs font-medium text-left transition ${
-                  material === mat
-                    ? 'border-amber-500/60 bg-amber-500/15 text-amber-300'
-                    : 'border-stone-800 bg-stone-950/60 text-stone-400 hover:text-stone-200'
-                }`}
+              <Field className="sm:col-span-2" label={t('form.subtitle')} htmlFor="field-subtitle">
+                <input
+                  id="field-subtitle"
+                  type="text"
+                  placeholder={t('form.subtitlePlaceholder')}
+                  value={subtitle}
+                  onChange={(e) => setSubtitle(e.target.value)}
+                  className="field"
+                />
+              </Field>
+
+              <Field
+                label={t('form.eventAt')}
+                htmlFor="field-eventAt"
+                hint={t('form.eventAtHint')}
+                badge={renderLowBadge('eventAt')}
               >
-                {t(`materials.${mat}`)}
-              </button>
-            ))}
-          </div>
-        </div>
+                <input
+                  id="field-eventAt"
+                  type="text"
+                  required
+                  placeholder="2026-11-09T19:00"
+                  value={eventAt}
+                  data-low={isLow('eventAt')}
+                  onChange={(e) => setEventAt(e.target.value)}
+                  className="field font-mono"
+                />
+              </Field>
 
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-stone-400 shrink-0">{t('form.age')}</span>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.05}
-            value={age}
-            onChange={(e) => setAge(Number(e.target.value))}
-            className="w-full accent-amber-400"
-          />
-          <span className="text-xs font-mono text-stone-400 w-10 text-right">
-            {Math.round(age * 100)}%
-          </span>
-        </div>
-      </section>
+              <Field label={t('form.eventTz')} htmlFor="field-eventTz">
+                <input
+                  id="field-eventTz"
+                  type="text"
+                  required
+                  placeholder="Asia/Tokyo"
+                  value={eventTz}
+                  onChange={(e) => setEventTz(e.target.value)}
+                  className="field font-mono"
+                />
+              </Field>
 
-      {/* 4. 回忆、评分与标签 */}
-      <section className="rounded-2xl border border-stone-800/80 bg-stone-900/40 p-5 space-y-4">
-        <h2 className="text-sm font-semibold text-stone-200">{t('form.memorySection')}</h2>
+              <Field
+                label={t('form.venueName')}
+                htmlFor="field-venueName"
+                badge={renderLowBadge('venueName')}
+              >
+                <input
+                  id="field-venueName"
+                  type="text"
+                  value={venueName}
+                  data-low={isLow('venueName')}
+                  onChange={(e) => setVenueName(e.target.value)}
+                  className="field"
+                />
+              </Field>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div>
-            <div className="block text-xs text-stone-400 mb-1.5">{t('form.rating')}</div>
-            <div className="flex items-center gap-1.5">
-              {[1, 2, 3, 4, 5].map((star) => (
-                <button
-                  key={star}
-                  type="button"
-                  onClick={() => setRating(star)}
-                  className={`h-8 w-8 rounded-lg border text-sm transition ${
-                    star <= rating
-                      ? 'border-amber-500/50 bg-amber-500/20 text-amber-300'
-                      : 'border-stone-800 bg-stone-950 text-stone-600'
-                  }`}
+              <div className="grid grid-cols-3 gap-4">
+                <Field className="col-span-2" label={t('form.city')} htmlFor="field-city">
+                  <input
+                    id="field-city"
+                    type="text"
+                    value={city}
+                    onChange={(e) => setCity(e.target.value)}
+                    className="field"
+                  />
+                </Field>
+                <Field label={t('form.country')} htmlFor="field-country">
+                  <input
+                    id="field-country"
+                    type="text"
+                    value={country}
+                    onChange={(e) => setCountry(e.target.value.toUpperCase())}
+                    className="field font-mono"
+                  />
+                </Field>
+              </div>
+
+              <Field label={t('form.seat')} htmlFor="field-seat" badge={renderLowBadge('seat')}>
+                <input
+                  id="field-seat"
+                  type="text"
+                  value={seat}
+                  data-low={isLow('seat')}
+                  onChange={(e) => setSeat(e.target.value)}
+                  className="field font-mono"
+                />
+              </Field>
+
+              <div className="grid grid-cols-3 gap-4">
+                <Field
+                  className="col-span-2"
+                  label={t('form.priceAmount')}
+                  htmlFor="field-price"
+                  badge={renderLowBadge('price')}
                 >
-                  ★
-                </button>
-              ))}
+                  <input
+                    id="field-price"
+                    type="number"
+                    step="any"
+                    value={priceAmountStr}
+                    data-low={isLow('price')}
+                    onChange={(e) => setPriceAmountStr(e.target.value)}
+                    className="field font-mono"
+                  />
+                </Field>
+                <Field label={t('form.priceCurrency')} htmlFor="field-currency">
+                  <input
+                    id="field-currency"
+                    type="text"
+                    value={priceCurrency}
+                    onChange={(e) => setPriceCurrency(e.target.value.toUpperCase())}
+                    className="field font-mono"
+                  />
+                </Field>
+              </div>
+
+              <Field label={t('form.lat')} htmlFor="field-lat" hint={t('form.coordsHint')}>
+                <input
+                  id="field-lat"
+                  type="number"
+                  step="any"
+                  placeholder="35.7056"
+                  value={latStr}
+                  onChange={(e) => setLatStr(e.target.value)}
+                  className="field font-mono"
+                />
+              </Field>
+
+              <Field label={t('form.lng')} htmlFor="field-lng" hint={t('form.coordsHint')}>
+                <input
+                  id="field-lng"
+                  type="number"
+                  step="any"
+                  placeholder="139.7519"
+                  value={lngStr}
+                  onChange={(e) => setLngStr(e.target.value)}
+                  className="field font-mono"
+                />
+              </Field>
             </div>
-          </div>
+          </section>
 
-          <div>
-            <label htmlFor="field-companions" className="block text-xs text-stone-400 mb-1">
-              {t('form.companions')}
-            </label>
-            <input
-              id="field-companions"
-              type="text"
-              value={companionsStr}
-              onChange={(e) => setCompanionsStr(e.target.value)}
-              className="w-full rounded-xl border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-100 focus:border-amber-500/50 focus:outline-none"
-            />
-          </div>
+          {/* 02 票面细节 */}
+          {extFields.length > 0 && (
+            <section className="space-y-6">
+              <SectionHead index="02" title={`${t('form.s2')} · ${t(`types.${type}`)}`} />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-6">
+                {extFields.map((key) => (
+                  <Field
+                    key={key}
+                    label={t(`form.ext.${key}`)}
+                    htmlFor={`ext-${key}`}
+                    badge={renderLowBadge(`details.${key}`)}
+                  >
+                    <input
+                      id={`ext-${key}`}
+                      type="text"
+                      value={details[key] ?? ''}
+                      data-low={isLow(`details.${key}`)}
+                      onChange={(e) => setDetails((prev) => ({ ...prev, [key]: e.target.value }))}
+                      className="field"
+                    />
+                  </Field>
+                ))}
+              </div>
+            </section>
+          )}
 
-          <div>
-            <label htmlFor="field-tags" className="block text-xs text-stone-400 mb-1">
-              {t('form.tags')}
-            </label>
-            <input
-              id="field-tags"
-              type="text"
-              value={tagsStr}
-              onChange={(e) => setTagsStr(e.target.value)}
-              className="w-full rounded-xl border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-100 focus:border-amber-500/50 focus:outline-none"
-            />
+          {/* 03 纸张与工艺 */}
+          <section className="space-y-6">
+            <SectionHead index="03" title={t('form.s3')} />
+
+            <div className="space-y-2.5">
+              <div className="label">{t('form.material')}</div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {MATERIALS.map((mat) => {
+                  const active = material === mat;
+                  return (
+                    <button
+                      key={mat}
+                      type="button"
+                      onClick={() => setMaterial(mat)}
+                      className={`border px-3.5 py-2.5 text-left transition-colors ${
+                        active
+                          ? 'border-fg bg-fg text-bg'
+                          : 'border-line hover:border-fg text-fg bg-bg-raised/40'
+                      }`}
+                    >
+                      <div className="text-xs font-medium">{t(`materials.${mat}`)}</div>
+                      <div
+                        className={`font-mono text-[10px] uppercase tracking-[0.12em] mt-0.5 ${
+                          active ? 'text-bg/75' : 'text-muted'
+                        }`}
+                      >
+                        {mat}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-4 pt-2">
+              <span className="label shrink-0">{t('form.age')}</span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={age}
+                onChange={(e) => setAge(Number(e.target.value))}
+                className="range"
+                aria-label={t('form.age')}
+              />
+              <span className="font-mono text-xs text-muted w-10 text-right">
+                {Math.round(age * 100)}%
+              </span>
+            </div>
+          </section>
+
+          {/* 04 那一天 */}
+          <section className="space-y-6">
+            <SectionHead index="04" title={t('form.s4')} />
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+              <div>
+                <div className="label mb-2.5">{t('form.rating')}</div>
+                <div className="flex items-center gap-1.5">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      type="button"
+                      onClick={() => setRating(star)}
+                      className={`h-8 w-8 rounded-full border font-mono text-xs transition-colors ${
+                        star <= rating
+                          ? 'border-fg bg-fg text-bg'
+                          : 'border-line text-muted hover:border-fg'
+                      }`}
+                    >
+                      {star}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <Field
+                label={t('form.companions')}
+                htmlFor="field-companions"
+                hint={t('form.listHint')}
+              >
+                <input
+                  id="field-companions"
+                  type="text"
+                  value={companionsStr}
+                  onChange={(e) => setCompanionsStr(e.target.value)}
+                  className="field"
+                />
+              </Field>
+
+              <Field label={t('form.tags')} htmlFor="field-tags" hint={t('form.listHint')}>
+                <input
+                  id="field-tags"
+                  type="text"
+                  value={tagsStr}
+                  onChange={(e) => setTagsStr(e.target.value)}
+                  className="field"
+                />
+              </Field>
+            </div>
+
+            <Field label={t('form.note')} htmlFor="field-note">
+              <textarea
+                id="field-note"
+                rows={3}
+                placeholder={t('form.notePlaceholder')}
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                className="field resize-y"
+              />
+            </Field>
+          </section>
+
+          <div className="pt-4 border-t border-line flex justify-end">
+            <Btn type="submit" variant="solid" arrow disabled={saving}>
+              {saving ? t('form.saving') : t('form.save')}
+            </Btn>
           </div>
         </div>
-
-        <div>
-          <label htmlFor="field-note" className="block text-xs text-stone-400 mb-1">
-            {t('form.note')}
-          </label>
-          <textarea
-            id="field-note"
-            rows={3}
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            className="w-full rounded-xl border border-stone-800 bg-stone-950 px-3 py-2 text-sm text-stone-100 focus:border-amber-500/50 focus:outline-none"
-          />
-        </div>
-      </section>
-
-      <div className="flex justify-end">
-        <button
-          type="submit"
-          disabled={saving}
-          className="inline-flex items-center gap-2 rounded-xl bg-amber-400 px-6 py-2.5 text-sm font-semibold text-stone-950 shadow-lg shadow-amber-500/20 hover:bg-amber-300 disabled:opacity-50"
-        >
-          <Save className="h-4 w-4" />
-          {t('form.save')}
-        </button>
       </div>
     </form>
   );
+
+  if (initialDraft) {
+    return content;
+  }
+
+  return <Container className="py-10 sm:py-14">{content}</Container>;
 };

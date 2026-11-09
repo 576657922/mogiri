@@ -1,7 +1,4 @@
-export { AppShell, ticketTypeEmoji } from './AppShell';
+export { AppShell, ticketTypeCode } from './AppShell';
 export { GlobalTicketStageHost } from './GlobalTicketStageHost';
-export {
-  type ActiveStageConfig,
-  type ScanPendingSession,
-  useUiStore,
-} from './store';
+export * from './primitives';
+export { type ActiveStageConfig, type ScanPendingSession, useUiStore } from './store';

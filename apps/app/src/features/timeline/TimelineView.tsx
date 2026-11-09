@@ -2,7 +2,6 @@ import { renderThumbnailDataUrl } from '@mogiri/renderer';
 import { TICKET_TYPES, type TicketType } from '@mogiri/shared';
 import { Link } from '@tanstack/react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Calendar, Grid, Layers, MapPin, Plus, Search, Sparkles, Star } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { db, type TicketRecord } from '../../data';
@@ -10,16 +9,37 @@ import {
   daysUntilEvent,
   filterTickets,
   formatEventDateDisplay,
+  getYearMonthKey,
   groupTicketsByYearMonth,
   toTicketSpec,
 } from '../../domain';
-import { ticketTypeEmoji, useUiStore } from '../../ui';
+import {
+  Arrow,
+  btnClass,
+  Container,
+  Label,
+  MaskLine,
+  RatingDots,
+  Reveal,
+  Segmented,
+  stubTilt,
+  ticketTypeCode,
+  useUiStore,
+} from '../../ui';
 
-function TicketThumbnailImg({ ticket }: { ticket: TicketRecord }) {
+function TicketStubPreview({
+  ticket,
+  tilt = 0,
+  className = '',
+}: {
+  ticket: TicketRecord;
+  tilt?: number;
+  className?: string;
+}) {
   const thumb = useMemo(() => {
     if (ticket.thumbDataUrl) return ticket.thumbDataUrl;
     try {
-      return renderThumbnailDataUrl(toTicketSpec(ticket), 560);
+      return renderThumbnailDataUrl(toTicketSpec(ticket), 640);
     } catch {
       return '';
     }
@@ -33,19 +53,23 @@ function TicketThumbnailImg({ ticket }: { ticket: TicketRecord }) {
 
   if (!thumb) {
     return (
-      <div className="w-full aspect-[18/7] rounded-xl bg-stone-900 border border-stone-800 flex items-center justify-center text-stone-400 text-sm">
+      <div className="aspect-[18/7] w-full border border-line bg-bg-raised flex items-center justify-center font-mono text-xs text-muted">
         {ticket.title}
       </div>
     );
   }
 
   return (
-    <img
-      src={thumb}
-      alt={ticket.title}
-      loading="lazy"
-      className="w-full h-auto object-contain drop-shadow-[0_12px_24px_rgba(0,0,0,0.55)] transition-transform duration-300 group-hover:scale-[1.02] group-hover:-translate-y-0.5"
-    />
+    <div
+      style={{ transform: `rotate(${tilt}deg)` }}
+      className={`transition-transform duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:rotate-0 group-hover:-translate-y-1.5 ${className}`}
+    >
+      <img
+        src={thumb}
+        alt={ticket.title}
+        className="w-full h-auto max-h-[240px] object-contain stub-shadow select-none"
+      />
+    </div>
   );
 }
 
@@ -81,288 +105,436 @@ export function TimelineView() {
     [allActive, filtered],
   );
 
+  // 统计不同票型数量、城市数量与最早年份
+  const archiveMeta = useMemo(() => {
+    const countsByType: Partial<Record<TicketType, number>> = {};
+    const cities = new Set<string>();
+    let minYear = 2026;
+    for (const tk of allActive) {
+      countsByType[tk.type] = (countsByType[tk.type] ?? 0) + 1;
+      if (tk.city) cities.add(tk.city);
+      const yr = getYearMonthKey(tk.eventAt).year;
+      if (yr < minYear) minYear = yr;
+    }
+    return {
+      countsByType,
+      citiesCount: cities.size,
+      sinceYear: allActive.length > 0 ? minYear : new Date().getFullYear(),
+    };
+  }, [allActive]);
+
+  // 编号映射（按时间正序给每张票分配固定档案编号 No.01, No.02...）
+  const catalogNumbers = useMemo(() => {
+    const sortedAsc = [...allActive].sort((a, b) => a.eventAt.localeCompare(b.eventAt));
+    const map = new Map<string, string>();
+    sortedAsc.forEach((tk, idx) => {
+      map.set(tk.id, String(idx + 1).padStart(2, '0'));
+    });
+    return map;
+  }, [allActive]);
+
+  const featuredUpcoming = grouped.upcoming[0] ?? allActive[0];
+  const upcomingDays = featuredUpcoming
+    ? daysUntilEvent(featuredUpcoming.eventAt, featuredUpcoming.eventTz)
+    : null;
+
+  const hasActiveFilters =
+    typeFilter !== 'all' || yearFilter !== 'all' || tagFilter !== 'all' || query.trim() !== '';
+
+  const resetFilters = () => {
+    setTypeFilter('all');
+    setYearFilter('all');
+    setTagFilter('all');
+    setQuery('');
+  };
+
   return (
-    <div className="space-y-6">
-      {/* 顶部标题与操作栏 */}
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-stone-100">
-            {t('timeline.title')}
-          </h1>
-          <p className="text-sm text-stone-400 mt-1">
-            {t('timeline.subtitle', { count: allActive.length })}
-          </p>
-        </div>
+    <div>
+      {/* 1. 刊头（Hero Masthead） */}
+      <section className="pt-10 pb-14 sm:pt-14 sm:pb-20">
+        <Container>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-12 items-end">
+            {/* 左侧大字宣言 */}
+            <div className="lg:col-span-7 space-y-6">
+              <Label index="01">{t('app.tagline')}</Label>
 
-        <div className="flex items-center gap-2">
-          <Link
-            to="/scan"
-            className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-semibold text-sm flex items-center gap-1.5 shadow-lg shadow-amber-500/15 transition-colors"
-          >
-            <Sparkles className="w-4 h-4" />
-            <span>{t('nav.scan')}</span>
-          </Link>
-          <Link
-            to="/t/new/edit"
-            className="px-3.5 py-2 rounded-xl bg-stone-900 hover:bg-stone-800 border border-stone-700 text-stone-100 font-medium text-sm flex items-center gap-1.5 transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            <span>{t('nav.newTicket')}</span>
-          </Link>
-        </div>
-      </div>
+              <h1 className="display text-[clamp(2.6rem,5.8vw,5rem)] text-fg">
+                <MaskLine>{t('home.heroLine1')}</MaskLine>
+                <MaskLine delay={0.08}>
+                  <span className="italic">{t('home.heroLine2')}</span>
+                </MaskLine>
+              </h1>
 
-      {/* 搜索与筛选工具栏 */}
-      <div className="bg-stone-900/70 border border-stone-800/90 rounded-2xl p-3.5 space-y-3">
-        <div className="flex flex-col md:flex-row gap-2.5">
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={t('timeline.searchPlaceholder')}
-              className="w-full pl-9 pr-3.5 py-2 rounded-xl bg-stone-950 border border-stone-800 text-sm text-stone-100 placeholder:text-stone-500 focus:outline-none focus:border-amber-500/60"
-            />
-          </div>
+              <p className="max-w-xl text-[15px] sm:text-[16px] leading-relaxed text-muted">
+                {t('home.heroLead')}
+              </p>
 
-          <div className="flex items-center gap-2">
-            <select
-              aria-label={t('timeline.filterYearAll')}
-              value={yearFilter}
-              onChange={(e) =>
-                setYearFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))
-              }
-              className="px-3 py-2 rounded-xl bg-stone-950 border border-stone-800 text-xs text-stone-200 focus:outline-none"
-            >
-              <option value="all">{t('timeline.filterYearAll')}</option>
-              {grouped.availableYears.map((y) => (
-                <option key={y} value={y}>
-                  {y}
-                </option>
-              ))}
-            </select>
+              <div className="pt-2 flex flex-wrap items-center gap-3">
+                <Link to="/scan" className={btnClass('solid')}>
+                  <span>{t('nav.scan')}</span>
+                  <Arrow />
+                </Link>
+                <Link to="/t/new/edit" className={btnClass('outline')}>
+                  <span>{t('nav.new')}</span>
+                </Link>
+              </div>
+            </div>
 
-            <select
-              aria-label={t('timeline.filterTagAll')}
-              value={tagFilter}
-              onChange={(e) => setTagFilter(e.target.value)}
-              className="px-3 py-2 rounded-xl bg-stone-950 border border-stone-800 text-xs text-stone-200 focus:outline-none"
-            >
-              <option value="all">{t('timeline.filterTagAll')}</option>
-              {grouped.availableTags.map((tag) => (
-                <option key={tag} value={tag}>
-                  #{tag}
-                </option>
-              ))}
-            </select>
+            {/* 右侧档案计数与「下一张」橱窗 */}
+            <div className="lg:col-span-5">
+              <div className="border border-line bg-bg-raised/70 p-6 sm:p-7 space-y-6">
+                {/* 三栏核心档案数字 */}
+                <div className="grid grid-cols-3 gap-4 border-b border-line pb-5">
+                  <div>
+                    <div className="display text-3xl sm:text-4xl text-fg">{allActive.length}</div>
+                    <div className="label mt-1">{t('home.statStubs')}</div>
+                  </div>
+                  <div className="border-l border-line pl-4">
+                    <div className="display text-3xl sm:text-4xl text-fg">
+                      {archiveMeta.citiesCount}
+                    </div>
+                    <div className="label mt-1">{t('home.statCities')}</div>
+                  </div>
+                  <div className="border-l border-line pl-4">
+                    <div className="display text-3xl sm:text-4xl text-fg">
+                      {archiveMeta.sinceYear}
+                    </div>
+                    <div className="label mt-1">{t('home.statSince')}</div>
+                  </div>
+                </div>
 
-            <div className="flex rounded-xl bg-stone-950 border border-stone-800 p-0.5">
-              <button
-                type="button"
-                onClick={() => setTimelineView('stack')}
-                title={t('timeline.viewStack')}
-                className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-colors ${
-                  timelineView === 'stack'
-                    ? 'bg-amber-500/20 text-amber-300'
-                    : 'text-stone-400 hover:text-stone-200'
-                }`}
-              >
-                <Layers className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">{t('timeline.viewStack')}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setTimelineView('grid')}
-                title={t('timeline.viewGrid')}
-                className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-colors ${
-                  timelineView === 'grid'
-                    ? 'bg-amber-500/20 text-amber-300'
-                    : 'text-stone-400 hover:text-stone-200'
-                }`}
-              >
-                <Grid className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">{t('timeline.viewGrid')}</span>
-              </button>
+                {/* 即将到来的票根橱窗 */}
+                {featuredUpcoming && (
+                  <Link
+                    to="/t/$id"
+                    params={{ id: featuredUpcoming.id }}
+                    className="group block space-y-4"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-2 label text-fg">
+                        <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+                        <span>{t('home.nextUp')}</span>
+                      </span>
+                      {upcomingDays !== null && upcomingDays >= 0 && (
+                        <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-accent font-medium">
+                          {upcomingDays === 0
+                            ? t('home.today')
+                            : `${upcomingDays} ${t('home.daysUntil')}`}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="py-2 px-3">
+                      <TicketStubPreview ticket={featuredUpcoming} tilt={-1.4} />
+                    </div>
+
+                    <div className="flex items-baseline justify-between gap-4 pt-1 border-t border-line">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-fg truncate group-hover:text-accent transition-colors">
+                          {featuredUpcoming.title}
+                        </div>
+                        <div className="font-mono text-[11px] text-muted truncate mt-0.5">
+                          {formatEventDateDisplay(featuredUpcoming.eventAt, i18n.language)}
+                          {featuredUpcoming.venueName ? ` · ${featuredUpcoming.venueName}` : ''}
+                        </div>
+                      </div>
+                      <span className="font-mono text-xs text-muted group-hover:translate-x-1 transition-transform">
+                        →
+                      </span>
+                    </div>
+                  </Link>
+                )}
+              </div>
             </div>
           </div>
-        </div>
+        </Container>
+      </section>
 
-        {/* 票型筛选胶囊 */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
-          <button
-            type="button"
-            onClick={() => setTypeFilter('all')}
-            className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
-              typeFilter === 'all'
-                ? 'bg-amber-400 text-stone-950'
-                : 'bg-stone-950 text-stone-400 hover:text-stone-200 border border-stone-800'
-            }`}
-          >
-            {t('types.all')}
-          </button>
-          {TICKET_TYPES.map((tp) => (
-            <button
-              key={tp}
-              type="button"
-              onClick={() => setTypeFilter(tp)}
-              className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap flex items-center gap-1 transition-colors ${
-                typeFilter === tp
-                  ? 'bg-amber-400 text-stone-950'
-                  : 'bg-stone-950 text-stone-400 hover:text-stone-200 border border-stone-800'
-              }`}
-            >
-              <span>{ticketTypeEmoji(tp)}</span>
-              <span>{t(`types.${tp}`)}</span>
-            </button>
-          ))}
-        </div>
-      </div>
+      {/* 齿孔分隔线 */}
+      <div aria-hidden className="perforation" />
 
-      {/* 即将到来的票（带倒计时 TL-05） */}
-      {grouped.upcoming.length > 0 && (
-        <section className="space-y-3">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-amber-300">
-              {t('timeline.upcomingSection')}
-            </h2>
+      {/* 2. 检索与视图控制栏 */}
+      <section className="sticky top-16 z-20 border-b border-line bg-bg/92 backdrop-blur-md">
+        <Container className="py-4 space-y-3.5">
+          {/* 第一行：票型编码筛选 + 视图切换 */}
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
+              <button
+                type="button"
+                onClick={() => setTypeFilter('all')}
+                className={`h-8 px-3 rounded-full text-xs transition-colors flex items-baseline gap-1.5 whitespace-nowrap ${
+                  typeFilter === 'all' ? 'bg-fg text-bg font-medium' : 'text-muted hover:text-fg'
+                }`}
+              >
+                <span className="font-mono text-[10px] tracking-[0.1em]">ALL</span>
+                <span>{t('types.all')}</span>
+                <span className="font-mono text-[10px] opacity-70">{allActive.length}</span>
+              </button>
+
+              {TICKET_TYPES.map((tp) => {
+                const count = archiveMeta.countsByType[tp] ?? 0;
+                const active = typeFilter === tp;
+                return (
+                  <button
+                    key={tp}
+                    type="button"
+                    onClick={() => setTypeFilter(tp)}
+                    className={`h-8 px-3 rounded-full text-xs transition-colors flex items-baseline gap-1.5 whitespace-nowrap ${
+                      active ? 'bg-fg text-bg font-medium' : 'text-muted hover:text-fg'
+                    }`}
+                  >
+                    <span className="font-mono text-[10px] tracking-[0.1em] opacity-75">
+                      {ticketTypeCode(tp)}
+                    </span>
+                    <span>{t(`types.${tp}`)}</span>
+                    {count > 0 && <span className="font-mono text-[10px] opacity-70">{count}</span>}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex items-center gap-3">
+              <span className="label hidden sm:inline">
+                {t('home.results', { count: filtered.length })}
+              </span>
+              <Segmented
+                ariaLabel="View mode"
+                value={timelineView}
+                onChange={setTimelineView}
+                options={[
+                  { value: 'stack', label: t('home.viewTable') },
+                  { value: 'grid', label: t('home.viewIndex') },
+                ]}
+              />
+            </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {grouped.upcoming.map((ticket) => {
-              const days = daysUntilEvent(ticket.eventAt, ticket.eventTz);
-              return (
-                <Link
-                  key={`upcoming-${ticket.id}`}
-                  to="/t/$id"
-                  params={{ id: ticket.id }}
-                  className="group relative rounded-2xl bg-gradient-to-br from-amber-500/10 via-stone-900/90 to-stone-900 border border-amber-500/30 p-4 hover:border-amber-400/60 transition-all"
+
+          {/* 第二行：下划线搜索框 + 年份与标签筛选 */}
+          <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-center pt-1 border-t border-line">
+            <div className="sm:col-span-7 flex items-center gap-2.5">
+              <span className="font-mono text-[11px] text-faint select-none">/</span>
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={t('home.searchPlaceholder')}
+                className="w-full bg-transparent py-1.5 text-[13.5px] text-fg placeholder:text-faint focus:outline-none"
+              />
+            </div>
+
+            <div className="sm:col-span-5 flex flex-wrap items-center justify-end gap-4">
+              <select
+                aria-label={t('home.yearAll')}
+                value={yearFilter}
+                onChange={(e) =>
+                  setYearFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))
+                }
+                className="bg-transparent font-mono text-[11.5px] uppercase tracking-[0.1em] text-muted hover:text-fg focus:outline-none cursor-pointer py-1"
+              >
+                <option value="all">{t('home.yearAll')}</option>
+                {grouped.availableYears.map((y) => (
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                aria-label={t('home.tagAll')}
+                value={tagFilter}
+                onChange={(e) => setTagFilter(e.target.value)}
+                className="bg-transparent font-mono text-[11.5px] tracking-[0.06em] text-muted hover:text-fg focus:outline-none cursor-pointer py-1"
+              >
+                <option value="all">{t('home.tagAll')}</option>
+                {grouped.availableTags.map((tag) => (
+                  <option key={tag} value={tag}>
+                    #{tag}
+                  </option>
+                ))}
+              </select>
+
+              {hasActiveFilters && (
+                <button
+                  type="button"
+                  onClick={resetFilters}
+                  className="font-mono text-[11px] uppercase tracking-[0.12em] text-accent hover:underline"
                 >
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-xs font-medium text-amber-300 flex items-center gap-1.5">
-                      <span>{ticketTypeEmoji(ticket.type)}</span>
-                      <span>{t(`types.${ticket.type}`)}</span>
-                    </span>
-                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-400 text-stone-950">
-                      {days <= 0
-                        ? t('timeline.countdownToday')
-                        : t('timeline.countdownDays', { days })}
-                    </span>
-                  </div>
-                  <TicketThumbnailImg ticket={ticket} />
-                </Link>
-              );
-            })}
+                  {t('home.clearFilters')}
+                </button>
+              )}
+            </div>
           </div>
-        </section>
-      )}
+        </Container>
+      </section>
 
-      {/* 按年月倒序分组的票夹列表（TL-01 / TL-02 / TL-04） */}
-      {grouped.groups.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-stone-800 p-12 text-center space-y-3">
-          <div className="text-3xl">🎟</div>
-          <div className="text-base font-semibold text-stone-200">{t('timeline.emptyTitle')}</div>
-          <p className="text-xs text-stone-400 max-w-md mx-auto">{t('timeline.emptyHint')}</p>
-          <div className="pt-2">
-            <Link
-              to="/t/new/edit"
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-500 text-stone-950 text-xs font-semibold"
-            >
-              <Plus className="w-4 h-4" />
-              <span>{t('timeline.createFirst')}</span>
-            </Link>
-          </div>
-        </div>
-      ) : (
-        <div className="space-y-8">
-          {grouped.groups.map((grp) => (
-            <section key={grp.yearMonth} className="space-y-3.5">
-              <div className="flex items-center gap-3">
-                <h2 className="text-base font-bold text-stone-200 flex items-center gap-2">
-                  <Calendar className="w-4 h-4 text-amber-400" />
-                  <span>{t('timeline.monthHeader', { year: grp.year, month: grp.month })}</span>
-                </h2>
-                <div className="h-px flex-1 bg-stone-800/80" />
-                <span className="text-xs text-stone-500 font-mono">{grp.tickets.length}</span>
+      {/* 3. 票根陈列区（桌面视图 vs 档案目录视图） */}
+      <section className="py-12 sm:py-16">
+        <Container>
+          {grouped.groups.length === 0 ? (
+            <div className="border border-line py-20 px-6 text-center space-y-4">
+              <div className="display text-3xl sm:text-4xl text-fg">
+                {hasActiveFilters ? t('home.emptyFiltered') : t('home.emptyTitle')}
+              </div>
+              <p className="text-sm text-muted max-w-md mx-auto">{t('home.emptyHint')}</p>
+              <div className="pt-2 flex justify-center gap-3">
+                {hasActiveFilters ? (
+                  <button type="button" onClick={resetFilters} className={btnClass('outline')}>
+                    {t('home.clearFilters')}
+                  </button>
+                ) : (
+                  <Link to="/t/new/edit" className={btnClass('solid')}>
+                    <span>{t('home.emptyCta')}</span>
+                    <Arrow />
+                  </Link>
+                )}
+              </div>
+            </div>
+          ) : timelineView === 'stack' ? (
+            /* 视图 A：桌面陈列（Table View）—— 左栏超大年月，右栏带轻微倾角的实体票根 */
+            <div className="space-y-20">
+              {grouped.groups.map((grp) => (
+                <div
+                  key={grp.yearMonth}
+                  className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 border-t border-line pt-8"
+                >
+                  {/* 左侧年月章节导轨 */}
+                  <div className="lg:col-span-3 lg:sticky lg:top-40 lg:self-start flex lg:flex-col items-baseline justify-between gap-2">
+                    <div>
+                      <div className="label">{grp.year}</div>
+                      <div className="display text-5xl sm:text-6xl text-fg mt-1">
+                        {String(grp.month).padStart(2, '0')}
+                      </div>
+                    </div>
+                    <div className="label">{t('home.results', { count: grp.tickets.length })}</div>
+                  </div>
+
+                  {/* 右侧票根桌面网格 */}
+                  <div className="lg:col-span-9 grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-14">
+                    {grp.tickets.map((ticket, idx) => {
+                      const no = catalogNumbers.get(ticket.id) ?? '01';
+                      const tilt = stubTilt(ticket.id, 1.8);
+                      return (
+                        <Reveal key={ticket.id} delay={Math.min(0.24, idx * 0.05)}>
+                          <Link
+                            to="/t/$id"
+                            params={{ id: ticket.id }}
+                            className="group block space-y-5"
+                          >
+                            {/* 实体票根图像（直接悬浮在暖白档案纸上） */}
+                            <div className="relative py-4 px-2 flex items-center justify-center min-h-[210px]">
+                              <TicketStubPreview ticket={ticket} tilt={tilt} />
+                            </div>
+
+                            {/* 底部编目说明条 */}
+                            <div className="border-t border-line pt-3.5 space-y-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono text-[11px] font-medium text-fg">
+                                    No.{no}
+                                  </span>
+                                  <span aria-hidden className="text-faint">
+                                    ·
+                                  </span>
+                                  <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted">
+                                    {ticketTypeCode(ticket.type)} / {t(`types.${ticket.type}`)}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center gap-2.5">
+                                  {ticket.wear.torn && (
+                                    <span className="border border-accent px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-[0.14em] text-accent">
+                                      {t('home.torn')}
+                                    </span>
+                                  )}
+                                  <span className="font-mono text-[11px] text-muted">
+                                    {formatEventDateDisplay(ticket.eventAt, i18n.language)}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="flex items-baseline justify-between gap-4">
+                                <h3 className="display text-2xl text-fg group-hover:text-accent transition-colors truncate">
+                                  {ticket.title}
+                                </h3>
+                                {ticket.rating !== undefined && (
+                                  <RatingDots value={ticket.rating} />
+                                )}
+                              </div>
+
+                              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
+                                <span className="truncate">
+                                  {[ticket.venueName, ticket.city, ticket.seat]
+                                    .filter(Boolean)
+                                    .join(' · ')}
+                                </span>
+                                {ticket.tags.length > 0 && (
+                                  <span className="font-mono text-[10.5px] text-faint">
+                                    {ticket.tags.map((tg) => `#${tg}`).join(' ')}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </Link>
+                        </Reveal>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            /* 视图 B：瑞士网格目录（Index View） */
+            <div className="border-t border-line">
+              <div className="hidden md:grid md:grid-cols-12 gap-4 py-3 border-b border-line-strong label">
+                <div className="col-span-1">{t('home.colNo')}</div>
+                <div className="col-span-2">{t('home.colDate')}</div>
+                <div className="col-span-1">{t('home.colType')}</div>
+                <div className="col-span-4">{t('home.colTitle')}</div>
+                <div className="col-span-2">{t('home.colVenue')}</div>
+                <div className="col-span-2 text-right">{t('form.seat')}</div>
               </div>
 
-              <div
-                className={
-                  timelineView === 'grid'
-                    ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5'
-                    : 'space-y-4 max-w-3xl mx-auto'
-                }
-              >
-                {grp.tickets.map((ticket) => (
+              {filtered.map((ticket) => {
+                const no = catalogNumbers.get(ticket.id) ?? '01';
+                return (
                   <Link
                     key={ticket.id}
                     to="/t/$id"
                     params={{ id: ticket.id }}
-                    className="group block rounded-2xl bg-stone-900/65 hover:bg-stone-900 border border-stone-800/80 hover:border-stone-700 p-4 transition-all"
+                    className="group grid grid-cols-1 md:grid-cols-12 gap-2 md:gap-4 items-center py-4 border-b border-line hover:bg-bg-raised/80 transition-colors px-2 -mx-2"
                   >
-                    <div className="mb-3">
-                      <TicketThumbnailImg ticket={ticket} />
+                    <div className="md:col-span-1 font-mono text-xs text-muted">No.{no}</div>
+                    <div className="md:col-span-2 font-mono text-xs text-fg">
+                      {ticket.eventAt.replace('T', ' ')}
                     </div>
-
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 text-xs text-stone-400">
-                          <span>{ticketTypeEmoji(ticket.type)}</span>
-                          <span>{formatEventDateDisplay(ticket.eventAt, i18n.language)}</span>
-                          {ticket.venueName && (
-                            <>
-                              <span>·</span>
-                              <span className="truncate flex items-center gap-0.5">
-                                <MapPin className="w-3 h-3 inline" />
-                                {ticket.venueName}
-                              </span>
-                            </>
-                          )}
-                        </div>
-                        <h3 className="font-bold text-stone-100 group-hover:text-amber-300 transition-colors truncate mt-0.5">
-                          {ticket.title}
-                        </h3>
-                        {ticket.seat && (
-                          <div className="text-xs font-mono text-stone-400 mt-0.5">
-                            {ticket.seat}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex flex-col items-end gap-1 shrink-0">
-                        {ticket.wear.torn && (
-                          <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                            {t('timeline.tornBadge')}
-                          </span>
-                        )}
-                        {ticket.rating !== undefined && (
-                          <div className="flex items-center gap-0.5 text-amber-400 text-xs">
-                            <Star className="w-3.5 h-3.5 fill-amber-400" />
-                            <span className="font-mono">{ticket.rating}</span>
-                          </div>
-                        )}
-                      </div>
+                    <div className="md:col-span-1">
+                      <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted">
+                        {ticketTypeCode(ticket.type)}
+                      </span>
                     </div>
-
-                    {ticket.tags.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5 mt-2.5">
-                        {ticket.tags.map((tag) => (
-                          <span
-                            key={tag}
-                            className="px-2 py-0.5 rounded-md bg-stone-950 border border-stone-800 text-[11px] text-stone-400"
-                          >
-                            #{tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
+                    <div className="md:col-span-4 min-w-0 flex items-baseline gap-2.5">
+                      <span className="display text-xl text-fg group-hover:text-accent transition-colors truncate">
+                        {ticket.title}
+                      </span>
+                      {ticket.wear.torn && (
+                        <span className="border border-accent px-1 py-0.2 font-mono text-[9px] uppercase tracking-[0.12em] text-accent shrink-0">
+                          {t('home.torn')}
+                        </span>
+                      )}
+                    </div>
+                    <div className="md:col-span-2 text-xs text-muted truncate">
+                      {[ticket.venueName, ticket.city].filter(Boolean).join(' · ') || '—'}
+                    </div>
+                    <div className="md:col-span-2 font-mono text-xs text-muted md:text-right truncate">
+                      {ticket.seat || '—'}
+                    </div>
                   </Link>
-                ))}
-              </div>
-            </section>
-          ))}
-        </div>
-      )}
+                );
+              })}
+            </div>
+          )}
+        </Container>
+      </section>
     </div>
   );
 }

@@ -1,140 +1,212 @@
+import type { TicketType } from '@mogiri/shared';
 import { Link, Outlet, useRouterState } from '@tanstack/react-router';
-import { BarChart3, Camera, Globe, MapPin, PlusCircle, Settings, Ticket } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { type ReactNode, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SUPPORTED_LOCALES, type SupportedLocale, setAppLocale } from '../i18n';
 import { GlobalTicketStageHost } from './GlobalTicketStageHost';
+import { Container } from './primitives';
 
-const TYPE_ICONS: Record<string, string> = {
-  flight: '✈️',
-  train: '🚄',
-  movie: '🎬',
-  concert: '🎤',
-  theater: '🎭',
-  sports: '⚽',
-  exhibition: '🖼',
-  other: '🎟',
+const TYPE_CODES: Record<TicketType, string> = {
+  flight: 'FLT',
+  train: 'TRN',
+  movie: 'CIN',
+  concert: 'LIV',
+  theater: 'STG',
+  sports: 'SPT',
+  exhibition: 'EXH',
+  other: 'MSC',
 };
 
-export function ticketTypeEmoji(type: string): string {
-  return TYPE_ICONS[type] ?? '🎟';
+export function ticketTypeCode(type: string): string {
+  return TYPE_CODES[type as TicketType] ?? 'MSC';
 }
 
 export function AppShell({ children }: { children?: ReactNode }) {
   const { t, i18n } = useTranslation();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
+  // 详情页（/t/$id，排除新建与编辑页）切换为「暗房观赏室」主题
+  const isViewingRoom =
+    pathname.startsWith('/t/') && pathname !== '/t/new/edit' && !pathname.endsWith('/edit');
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.documentElement.classList.toggle('theme-room', isViewingRoom);
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) {
+      meta.setAttribute('content', isViewingRoom ? '#0e0d0c' : '#ece7de');
+    }
+  }, [isViewingRoom]);
+
   const navItems = [
-    { to: '/', label: t('nav.timeline'), icon: Ticket, active: pathname === '/' },
     {
+      index: '01',
+      to: '/',
+      label: t('nav.archive'),
+      active: pathname === '/',
+    },
+    {
+      index: '02',
       to: '/scan',
       label: t('nav.scan'),
-      icon: Camera,
       active: pathname.startsWith('/scan'),
     },
     {
+      index: '03',
       to: '/t/new/edit',
-      label: t('nav.newTicket'),
-      icon: PlusCircle,
+      label: t('nav.new'),
       active: pathname === '/t/new/edit',
     },
     {
+      index: '04',
       to: '/recap/2026',
       label: t('nav.recap'),
-      icon: BarChart3,
       active: pathname.startsWith('/recap'),
     },
-    { to: '/map', label: t('nav.map'), icon: MapPin, active: pathname === '/map' },
     {
+      index: '05',
+      to: '/map',
+      label: t('nav.atlas'),
+      active: pathname === '/map',
+    },
+    {
+      index: '06',
       to: '/settings',
       label: t('nav.settings'),
-      icon: Settings,
       active: pathname === '/settings',
     },
   ];
 
+  const marqueeText = t('home.marquee');
+
   return (
-    <div className="min-h-screen bg-stone-950 text-stone-100 flex flex-col pb-20 md:pb-6">
-      <header className="sticky top-0 z-30 border-b border-stone-800/80 bg-stone-950/90 backdrop-blur-md">
-        <div className="max-w-6xl mx-auto px-4 h-15 flex items-center justify-between gap-4">
-          <Link to="/" className="flex items-center gap-2.5 group">
-            <span className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-400/20 via-indigo-500/20 to-rose-500/20 border border-amber-400/40 flex items-center justify-center text-lg shadow-inner">
-              🎟
-            </span>
-            <div>
-              <div className="font-bold tracking-tight text-stone-100 group-hover:text-amber-300 transition-colors leading-none">
+    <div className="min-h-screen flex flex-col bg-bg text-fg pb-20 md:pb-0">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:bg-fg focus:text-bg focus:px-4 focus:py-2 focus:text-xs"
+      >
+        {t('app.skip')}
+      </a>
+
+      {/* 顶部编辑式刊头 */}
+      <header className="sticky top-0 z-30 border-b border-line bg-bg/90 backdrop-blur-md">
+        <Container className="h-16 flex items-center justify-between gap-6">
+          <div className="flex items-baseline gap-4">
+            <Link to="/" className="group inline-flex items-baseline gap-2.5">
+              <span className="display text-[26px] tracking-tight text-fg leading-none">
                 {t('app.name')}
-              </div>
-              <div className="text-[11px] text-stone-400 mt-0.5 hidden sm:block">
-                {t('app.tagline')}
-              </div>
-            </div>
-          </Link>
-
-          <nav className="hidden md:flex items-center gap-1">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              return (
-                <Link
-                  key={item.to}
-                  to={item.to}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-colors ${
-                    item.active
-                      ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
-                      : 'text-stone-400 hover:text-stone-100 hover:bg-stone-900'
-                  }`}
-                >
-                  <Icon className="w-4 h-4" />
-                  <span>{item.label}</span>
-                </Link>
-              );
-            })}
-          </nav>
-
-          <div className="flex items-center gap-2">
-            <span className="hidden lg:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs bg-emerald-500/10 text-emerald-300 border border-emerald-500/25">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              {t('app.offlineBadge')}
-            </span>
-            <div className="flex items-center gap-1 bg-stone-900 border border-stone-800 rounded-lg px-2 py-1">
-              <Globe className="w-3.5 h-3.5 text-stone-400" />
-              <select
-                aria-label="Language"
-                value={i18n.language}
-                onChange={(e) => setAppLocale(e.target.value as SupportedLocale)}
-                className="bg-transparent text-xs text-stone-200 focus:outline-none cursor-pointer"
-              >
-                {SUPPORTED_LOCALES.map((loc) => (
-                  <option key={loc.code} value={loc.code} className="bg-stone-900 text-stone-100">
-                    {loc.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+              </span>
+              <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted group-hover:text-fg transition-colors">
+                {t('app.wordmark')}
+              </span>
+            </Link>
+            <span aria-hidden className="hidden lg:inline-block h-3 w-px bg-line-strong" />
+            <span className="hidden lg:inline-block label">{t('app.tagline')}</span>
           </div>
-        </div>
-      </header>
 
-      <main className="flex-1 max-w-6xl w-full mx-auto px-4 py-6">{children ?? <Outlet />}</main>
-
-      {/* 移动端底部导航栏 */}
-      <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 border-t border-stone-800 bg-stone-950/95 backdrop-blur-md">
-        <div className="grid grid-cols-6 h-16">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            return (
+          {/* 桌面端编号导航 */}
+          <nav aria-label="Primary" className="hidden md:flex items-center gap-6 lg:gap-8">
+            {navItems.map((item) => (
               <Link
                 key={item.to}
                 to={item.to}
-                className={`flex flex-col items-center justify-center gap-1 text-[11px] font-medium ${
-                  item.active ? 'text-amber-300' : 'text-stone-400'
+                data-active={item.active}
+                className={`ulink inline-flex items-baseline gap-1.5 py-1 text-[13px] transition-colors ${
+                  item.active ? 'text-fg font-medium' : 'text-muted hover:text-fg'
                 }`}
               >
-                <Icon className="w-4 h-4" />
-                <span className="truncate max-w-full px-1">{item.label}</span>
+                <span className="font-mono text-[10px] tracking-[0.12em] text-faint">
+                  {item.index}
+                </span>
+                <span>{item.label}</span>
               </Link>
-            );
-          })}
+            ))}
+          </nav>
+
+          {/* 右侧离线状态与语言切换 */}
+          <div className="flex items-center gap-4">
+            <span className="hidden xl:inline-flex items-center gap-2 label">
+              <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+              <span>{t('app.offline')}</span>
+            </span>
+
+            <fieldset
+              aria-label={t('nav.language')}
+              className="inline-flex items-center border border-line rounded-full p-0.5 m-0"
+            >
+              {SUPPORTED_LOCALES.map((loc) => {
+                const active = i18n.language === loc.code;
+                return (
+                  <button
+                    key={loc.code}
+                    type="button"
+                    onClick={() => setAppLocale(loc.code as SupportedLocale)}
+                    className={`h-6 px-2.5 rounded-full font-mono text-[10.5px] tracking-[0.08em] transition-colors ${
+                      active ? 'bg-fg text-bg font-medium' : 'text-muted hover:text-fg'
+                    }`}
+                    title={loc.label}
+                  >
+                    {loc.short}
+                  </button>
+                );
+              })}
+            </fieldset>
+          </div>
+        </Container>
+      </header>
+
+      {/* 正文内容 */}
+      <main id="main-content" className="flex-1">
+        {children ?? <Outlet />}
+      </main>
+
+      {/* 底部版权与票根跑马灯 */}
+      <footer className="mt-20 border-t border-line">
+        <div className="overflow-hidden border-b border-line py-2.5 select-none">
+          <div className="marquee-track">
+            {[0, 1, 2, 3].map((idx) => (
+              <span
+                key={idx}
+                className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-muted px-6"
+              >
+                {marqueeText}
+              </span>
+            ))}
+          </div>
+        </div>
+        <Container className="py-6 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-baseline gap-3">
+            <span className="display text-lg">{t('app.name')}</span>
+            <span className="label">HANKEN ARCHIVE · VOL. 2026</span>
+          </div>
+          <div className="label">{t('app.offline')}</div>
+        </Container>
+      </footer>
+
+      {/* 移动端底部编号导航 */}
+      <nav
+        aria-label="Mobile Primary"
+        className="md:hidden fixed bottom-0 inset-x-0 z-30 border-t border-line bg-bg/95 backdrop-blur-md"
+      >
+        <div className="grid grid-cols-6 h-14">
+          {navItems.map((item) => (
+            <Link
+              key={item.to}
+              to={item.to}
+              className={`flex flex-col items-center justify-center gap-0.5 transition-colors ${
+                item.active ? 'text-fg font-medium' : 'text-muted'
+              }`}
+            >
+              <span
+                className={`font-mono text-[9.5px] tracking-[0.14em] ${
+                  item.active ? 'text-accent' : 'text-faint'
+                }`}
+              >
+                {item.index}
+              </span>
+              <span className="text-[11px] truncate max-w-full px-1">{item.label}</span>
+            </Link>
+          ))}
         </div>
       </nav>
 

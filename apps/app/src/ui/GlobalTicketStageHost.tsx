@@ -78,7 +78,6 @@ export function GlobalTicketStageHost() {
         zIndex: visible ? 20 : -1,
         opacity: visible ? 1 : 0,
         pointerEvents: visible ? 'auto' : 'none',
-        borderRadius: '1rem',
         overflow: 'hidden',
       }}
     >

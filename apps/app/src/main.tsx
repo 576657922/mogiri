@@ -1,3 +1,9 @@
+import '@fontsource/instrument-serif/400.css';
+import '@fontsource/instrument-serif/400-italic.css';
+import '@fontsource/noto-serif-sc/500.css';
+import '@fontsource/noto-serif-jp/500.css';
+import '@fontsource-variable/inter';
+import '@fontsource-variable/jetbrains-mono';
 import { RouterProvider } from '@tanstack/react-router';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
@@ -17,6 +23,7 @@ createRoot(rootEl).render(
   </React.StrictMode>,
 );
 
+/** 启动后台任务：GPU 档位检测、清理超过 30 天的回收站票据、首次注入示例票根 */
 async function bootstrap() {
   try {
     void useUiStore.getState().initQualityDetection();

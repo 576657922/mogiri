@@ -5,7 +5,6 @@ import {
   recognizeLocal,
 } from '@mogiri/shared/recognize';
 import { useNavigate } from '@tanstack/react-router';
-import { Camera, Crop, RotateCcw, ScanLine, Sparkles, Wand2 } from 'lucide-react';
 import type React from 'react';
 import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -19,7 +18,21 @@ import {
   type SampleOcrPreset,
   warpPerspectiveToCanvas,
 } from '../../platform';
-import { useUiStore } from '../../ui';
+import { Btn, btnClass, Container, Field, Label, SectionHead, useUiStore } from '../../ui';
+
+const PRESET_SHORT_KEY: Record<string, 'jr' | 'flight' | 'movie' | 'concert'> = {
+  'jr-shinkansen': 'jr',
+  'flight-bcbp': 'flight',
+  'cinema-toho': 'movie',
+  'concert-live': 'concert',
+};
+
+const PRESET_CODE: Record<string, string> = {
+  'jr-shinkansen': 'TRN',
+  'flight-bcbp': 'FLT',
+  'cinema-toho': 'CIN',
+  'concert-live': 'LIV',
+};
 
 export const ScanFlowView: React.FC = () => {
   const { t } = useTranslation();
@@ -105,7 +118,6 @@ export const ScanFlowView: React.FC = () => {
       .map((s) => s.trim())
       .filter(Boolean);
 
-    // 如果用户没有改动预设文本行，保留预设的精细文本框坐标；否则按行顺序生成垂直分布框
     const presetJoined = presetLines.map((l) => l.text).join('\n');
     const lines: OcrLine[] =
       ocrText.trim() === presetJoined.trim()
@@ -161,174 +173,207 @@ export const ScanFlowView: React.FC = () => {
   const polygonPoints = quad.map((p) => `${p.x * 100},${p.y * 100}`).join(' ');
 
   return (
-    <div className="space-y-6 pb-8">
-      <div>
-        <h1 className="text-xl font-bold text-stone-100 flex items-center gap-2">
-          <ScanLine className="h-5 w-5 text-amber-400" />
-          {t('scan.title')}
-        </h1>
-        <p className="text-xs text-stone-400 mt-1">{t('scan.subtitle')}</p>
+    <Container className="py-10 sm:py-14 space-y-14">
+      {/* 刊头 */}
+      <div className="max-w-3xl space-y-4">
+        <Label index="02">{t('scan.eyebrow')}</Label>
+        <h1 className="display text-[clamp(2.4rem,5vw,4.2rem)] text-fg">{t('scan.title')}</h1>
+        <p className="text-[15px] leading-relaxed text-muted">{t('scan.lead')}</p>
       </div>
 
-      {/* 步骤 1：导入照片与四角透视校正 */}
-      <section className="rounded-2xl border border-stone-800/80 bg-stone-900/40 p-5 space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-stone-200">{t('scan.stepUpload')}</h2>
-          <label className="cursor-pointer inline-flex items-center gap-1.5 rounded-xl bg-stone-800 px-3.5 py-2 text-xs font-medium text-stone-100 hover:bg-stone-700 transition">
-            <Camera className="h-3.5 w-3.5 text-amber-400" />
-            {t('scan.uploadPhoto')}
-            <input type="file" accept="image/*" onChange={handleUploadImage} className="hidden" />
-          </label>
-        </div>
-
-        {rawImageUrl && (
-          <div className="space-y-3">
-            <p className="text-xs text-stone-400">{t('scan.cropHint')}</p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
-              <div
-                ref={containerRef}
-                onPointerMove={handlePointerMove}
-                onPointerUp={() => setDraggingCorner(null)}
-                onPointerLeave={() => setDraggingCorner(null)}
-                className="relative select-none overflow-hidden rounded-xl border border-stone-700 bg-stone-950 touch-none"
-              >
-                <img
-                  ref={imgRef}
-                  src={rawImageUrl}
-                  alt="Raw ticket scan"
-                  className="block w-full h-auto max-h-72 object-contain pointer-events-none"
-                />
-                <svg
-                  viewBox="0 0 100 100"
-                  preserveAspectRatio="none"
-                  className="absolute inset-0 h-full w-full pointer-events-none"
-                >
-                  <title>Perspective crop quad</title>
-                  <polygon
-                    points={polygonPoints}
-                    fill="rgba(251, 191, 36, 0.16)"
-                    stroke="#fbbf24"
-                    strokeWidth="0.8"
-                  />
-                </svg>
-                {(['tl', 'tr', 'br', 'bl'] as const).map((cornerKey, idx) => {
-                  const pt = quad[idx] ?? { x: 0.5, y: 0.5 };
-                  return (
-                    <button
-                      key={cornerKey}
-                      type="button"
-                      onPointerDown={(e) => {
-                        e.stopPropagation();
-                        setDraggingCorner(idx);
-                      }}
-                      style={{ left: `${pt.x * 100}%`, top: `${pt.y * 100}%` }}
-                      className="absolute -translate-x-1/2 -translate-y-1/2 h-5 w-5 rounded-full border-2 border-stone-950 bg-amber-400 shadow-md cursor-grab active:cursor-grabbing"
-                      aria-label={`Corner ${idx + 1}`}
+      {/* 双栏工作台 */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-start">
+        {/* 左栏：照片导入与四角透视校正 + 样本选择器 */}
+        <div className="lg:col-span-6 space-y-10">
+          <section className="space-y-5">
+            <SectionHead
+              index="01"
+              title={t('scan.step1')}
+              aside={
+                rawImageUrl ? (
+                  <label className={`${btnClass('ghost', 'h-8 px-3 text-xs')} cursor-pointer`}>
+                    <span>{t('scan.replacePhoto')}</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleUploadImage}
+                      className="hidden"
                     />
-                  );
-                })}
-              </div>
+                  </label>
+                ) : undefined
+              }
+            />
 
-              {warpedDataUrl && (
-                <div className="rounded-xl border border-stone-800 bg-stone-950/70 p-3 flex flex-col items-center gap-2">
+            {!rawImageUrl ? (
+              <label className="cropmarks border border-line bg-bg-raised/60 hover:bg-bg-raised transition-colors p-10 flex flex-col items-center justify-center text-center gap-2 cursor-pointer min-h-[220px]">
+                <span className="display text-2xl text-fg">{t('scan.dropTitle')}</span>
+                <span className="label">{t('scan.dropHint')}</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleUploadImage}
+                  className="hidden"
+                />
+              </label>
+            ) : (
+              <div className="space-y-4">
+                <p className="text-xs text-muted">{t('scan.cropHint')}</p>
+
+                <div
+                  ref={containerRef}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={() => setDraggingCorner(null)}
+                  onPointerLeave={() => setDraggingCorner(null)}
+                  className="relative select-none overflow-hidden border border-line bg-bg-raised touch-none"
+                >
                   <img
-                    src={warpedDataUrl}
-                    alt="Rectified ticket"
-                    className="max-h-56 w-auto object-contain rounded"
+                    ref={imgRef}
+                    src={rawImageUrl}
+                    alt="Raw ticket scan"
+                    className="block w-full h-auto max-h-72 object-contain pointer-events-none"
                   />
+                  <svg
+                    viewBox="0 0 100 100"
+                    preserveAspectRatio="none"
+                    className="absolute inset-0 h-full w-full pointer-events-none"
+                  >
+                    <title>Perspective crop quad</title>
+                    <polygon
+                      points={polygonPoints}
+                      fill="rgba(224, 64, 42, 0.14)"
+                      stroke="#e0402a"
+                      strokeWidth="0.7"
+                    />
+                  </svg>
+                  {(['tl', 'tr', 'br', 'bl'] as const).map((cornerKey, idx) => {
+                    const pt = quad[idx] ?? { x: 0.5, y: 0.5 };
+                    return (
+                      <button
+                        key={cornerKey}
+                        type="button"
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          setDraggingCorner(idx);
+                        }}
+                        style={{ left: `${pt.x * 100}%`, top: `${pt.y * 100}%` }}
+                        className="absolute -translate-x-1/2 -translate-y-1/2 h-4 w-4 rounded-full border-2 border-bg bg-accent cursor-grab active:cursor-grabbing"
+                        aria-label={`Corner ${idx + 1}`}
+                      />
+                    );
+                  })}
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <Btn variant="solid" className="h-9 px-4 text-xs" onClick={handleApplyWarp}>
+                      {t('scan.apply')}
+                    </Btn>
+                    <Btn
+                      variant="outline"
+                      className="h-9 px-4 text-xs"
+                      onClick={() => setQuad(DEFAULT_QUAD)}
+                    >
+                      {t('scan.reset')}
+                    </Btn>
+                  </div>
+
                   {warpedSizeMm && (
-                    <span className="text-[11px] font-mono text-stone-400">
-                      {warpedSizeMm.w}mm × {warpedSizeMm.h}mm
+                    <span className="label text-fg">
+                      {t('scan.rectified', { w: warpedSizeMm.w, h: warpedSizeMm.h })}
                     </span>
                   )}
                 </div>
-              )}
+
+                {warpedDataUrl && (
+                  <div className="cropmarks border border-line bg-bg-raised/60 p-4 flex justify-center">
+                    <img
+                      src={warpedDataUrl}
+                      alt="Rectified ticket"
+                      className="max-h-48 w-auto object-contain stub-shadow"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+
+          {/* 4 张内置真机样本卡片 */}
+          <section className="space-y-4">
+            <div className="label">{t('scan.samplesLabel')}</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {SAMPLE_OCR_PRESETS.map((preset) => {
+                const shortKey = PRESET_SHORT_KEY[preset.id] ?? 'jr';
+                const code = PRESET_CODE[preset.id] ?? 'DOC';
+                const active = activePresetId === preset.id;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => handleSelectPreset(preset)}
+                    className={`border p-4 text-left transition-colors space-y-1.5 ${
+                      active
+                        ? 'border-fg bg-fg text-bg'
+                        : 'border-line bg-bg-raised/40 hover:border-fg text-fg'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span
+                        className={`font-mono text-[10px] uppercase tracking-[0.16em] ${
+                          active ? 'text-bg/75' : 'text-muted'
+                        }`}
+                      >
+                        {code}
+                      </span>
+                      {active && <span className="h-1.5 w-1.5 rounded-full bg-accent" />}
+                    </div>
+                    <div className="text-sm font-medium">{t(`scan.sample.${shortKey}`)}</div>
+                    <div className={`text-[11.5px] ${active ? 'text-bg/75' : 'text-muted'}`}>
+                      {t(`scan.sampleMeta.${shortKey}`)}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
-
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={handleApplyWarp}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-amber-400/20 border border-amber-500/40 px-3.5 py-1.5 text-xs font-medium text-amber-300 hover:bg-amber-400/30"
-              >
-                <Crop className="h-3.5 w-3.5" />
-                {t('scan.applyPerspective')}
-              </button>
-              <button
-                type="button"
-                onClick={() => setQuad(DEFAULT_QUAD)}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-stone-800 bg-stone-900 px-3 py-1.5 text-xs text-stone-400 hover:text-stone-200"
-              >
-                <RotateCcw className="h-3.5 w-3.5" />
-                {t('scan.resetCorners')}
-              </button>
-            </div>
-          </div>
-        )}
-      </section>
-
-      {/* 步骤 2：本地识别引擎样本与 OCR 规则提取 */}
-      <section className="rounded-2xl border border-stone-800/80 bg-stone-900/40 p-5 space-y-4">
-        <h2 className="text-sm font-semibold text-stone-200 flex items-center gap-1.5">
-          <Sparkles className="h-4 w-4 text-amber-400" />
-          {t('scan.sampleTitle')}
-        </h2>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {SAMPLE_OCR_PRESETS.map((preset) => (
-            <button
-              key={preset.id}
-              type="button"
-              onClick={() => handleSelectPreset(preset)}
-              className={`rounded-xl border px-3.5 py-2.5 text-xs font-medium text-left transition ${
-                activePresetId === preset.id
-                  ? 'border-amber-500/60 bg-amber-500/15 text-amber-200'
-                  : 'border-stone-800 bg-stone-950/60 text-stone-400 hover:text-stone-200'
-              }`}
-            >
-              {t(preset.labelKey)}
-            </button>
-          ))}
+          </section>
         </div>
 
-        <div>
-          <label htmlFor="ocr-lines-input" className="block text-xs text-stone-400 mb-1.5">
-            {t('scan.customOcrLabel')}
-          </label>
-          <textarea
-            id="ocr-lines-input"
-            rows={6}
-            value={ocrText}
-            onChange={(e) => setOcrText(e.target.value)}
-            className="w-full rounded-xl border border-stone-800 bg-stone-950 px-3 py-2.5 text-xs font-mono text-stone-200 focus:border-amber-500/50 focus:outline-none"
-          />
-        </div>
+        {/* 右栏：OCR 文本行与条码识别 */}
+        <div className="lg:col-span-6 space-y-6">
+          <SectionHead index="02" title={t('scan.step2')} />
 
-        <div>
-          <label htmlFor="barcode-input" className="block text-xs text-stone-400 mb-1.5">
-            {t('scan.barcodeLabel')}
-          </label>
-          <input
-            id="barcode-input"
-            type="text"
-            value={barcodeText}
-            onChange={(e) => setBarcodeText(e.target.value)}
-            placeholder="M1YAMADA/TARO       EABC123 HNDCTSNH 0065 105Y018A0025 100"
-            className="w-full rounded-xl border border-stone-800 bg-stone-950 px-3 py-2 text-xs font-mono text-stone-200 focus:border-amber-500/50 focus:outline-none"
-          />
-        </div>
+          <Field label={t('scan.ocrLabel')} htmlFor="ocr-lines-input" hint={t('scan.ocrHint')}>
+            <textarea
+              id="ocr-lines-input"
+              rows={8}
+              value={ocrText}
+              onChange={(e) => setOcrText(e.target.value)}
+              className="mt-2 w-full border border-line bg-bg-raised/60 p-4 font-mono text-xs leading-relaxed text-fg focus:border-fg focus:outline-none"
+            />
+          </Field>
 
-        <div className="flex justify-end pt-1">
-          <button
-            type="button"
-            onClick={handleRunRecognize}
-            className="inline-flex items-center gap-2 rounded-xl bg-amber-400 px-5 py-2.5 text-sm font-semibold text-stone-950 shadow-lg shadow-amber-500/20 hover:bg-amber-300 transition"
+          <Field
+            label={t('scan.barcodeLabel')}
+            htmlFor="barcode-input"
+            hint={t('scan.barcodeHint')}
           >
-            <Wand2 className="h-4 w-4" />
-            {t('scan.runLocalRecognize')}
-          </button>
+            <input
+              id="barcode-input"
+              type="text"
+              value={barcodeText}
+              onChange={(e) => setBarcodeText(e.target.value)}
+              placeholder="M1YAMADA/TARO       EABC123 HNDCTSNH 0065 105Y018A0025 100"
+              className="field font-mono text-xs"
+            />
+          </Field>
+
+          <div className="pt-4 border-t border-line flex flex-wrap items-center justify-between gap-4">
+            <span className="label">{t('scan.runHint')}</span>
+            <Btn variant="solid" arrow data-testid="run-recognize" onClick={handleRunRecognize}>
+              {t('scan.run')}
+            </Btn>
+          </div>
         </div>
-      </section>
-    </div>
+      </div>
+    </Container>
   );
 };
