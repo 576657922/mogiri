@@ -1,7 +1,8 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
+import { renderTicketCardCanvas } from './export/thumbnail';
 import { clamp, pointerToTilt } from './input/tilt';
 import { prefersReducedMotion } from './quality/quality';
-import { drawBack, drawFace } from './templates/draw';
+import { drawBack } from './templates/draw';
 import { getTemplate } from './templates/presets';
 import type { TicketSpec } from './types';
 
@@ -13,22 +14,23 @@ export type TicketFallbackProps = {
 };
 
 /**
- * T1 降级：不用 WebGL。静态票面图 + CSS 3D 倾斜 + 渐变模拟光泽。
+ * T1 降级：不用 WebGL。静态票面图（含镭射/烫金/打孔/撕裂合成） + CSS 3D 倾斜 + 渐变模拟光泽。
  * 「减弱动态效果」开启时不跟随指针倾斜。见 02-architecture §5.5。
  */
 export function TicketFallback({ spec, flipped = false, className, style }: TicketFallbackProps) {
   const tpl = getTemplate(spec.templateId);
   const size = spec.sizeMm ?? tpl.size;
   const fieldsKey = JSON.stringify(spec.fields);
+  const wearKey = JSON.stringify(spec.wear);
   // biome-ignore lint/correctness/useExhaustiveDependencies: 用序列化后的 key 判断内容是否变化
   const images = useMemo(() => {
-    const face = drawFace(tpl, spec, 1200);
+    const faceCanvas = renderTicketCardCanvas(spec, 1200);
     const back = drawBack(tpl, spec, 800);
     return {
-      face: face.albedo.toDataURL('image/webp', 0.9),
+      face: faceCanvas.toDataURL('image/webp', 0.9),
       back: back?.toDataURL('image/webp', 0.9) ?? null,
     };
-  }, [tpl, spec.id, spec.faceImage, spec.backImage, fieldsKey]);
+  }, [tpl, spec.id, spec.material, spec.faceImage, spec.backImage, fieldsKey, wearKey]);
 
   const ref = useRef<HTMLDivElement>(null);
   const [tilt, setTilt] = useState({ x: 0, y: 0 });

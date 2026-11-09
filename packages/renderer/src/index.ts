@@ -1,3 +1,8 @@
+export {
+  renderThumbnailBlob,
+  renderThumbnailDataUrl,
+  renderTicketCardCanvas,
+} from './export/thumbnail';
 export type { Tilt, TiltController, TiltSource } from './input/tilt';
 export {
   createTiltController,
@@ -21,10 +26,16 @@ export { formatValue, parseLocalDateTime } from './templates/format';
 export {
   boardingPass,
   concertHolo,
+  DEFAULT_TEMPLATE_BY_TYPE,
+  exhibitionMinimal,
+  genericStub,
   getTemplate,
   jrMagnetic,
+  movieThermal,
   SAMPLE_TICKETS,
+  sportsPass,
   TEMPLATES,
+  theaterClassic,
 } from './templates/presets';
 export type { BackDef, Background, Region, TemplateDef, TextRegion } from './templates/types';
 export type { MaterialName, PointMm, QualityTier, TicketSpec, Wear } from './types';

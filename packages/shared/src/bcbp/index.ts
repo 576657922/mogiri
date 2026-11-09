@@ -7,3 +7,4 @@ export {
   parseBcbp,
 } from './parse';
 export { bcbpFlightDate, bcbpToRecognition } from './recognition';
+export { BCBP_SAMPLES, type BcbpLegInput, buildBcbp } from './samples';
