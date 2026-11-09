@@ -7,27 +7,412 @@ import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { db, type TicketRecord } from '../../data';
-import { filterTickets, formatEventDateDisplay, getYearMonthKey, toTicketSpec } from '../../domain';
-import { btnClass, RatingDots, Segmented, stubTilt, useUiStore } from '../../ui';
+import { filterTickets, formatEventDateDisplay, toTicketSpec } from '../../domain';
+import { btnClass, RatingDots, ticketTypeCode, useUiStore } from '../../ui';
+
+const MONTH_ABBR = [
+  'JAN',
+  'FEB',
+  'MAR',
+  'APR',
+  'MAY',
+  'JUN',
+  'JUL',
+  'AUG',
+  'SEP',
+  'OCT',
+  'NOV',
+  'DEC',
+] as const;
 
 /**
- * 票根缩略图组件（支持光标悬浮 3D 微倾角与动态高光层）
+ * Concept C 后方层叠票根的工业卡纸配色（由近及远：象牙白、朱红、粉青、钴蓝、暖橙黄、石墨黑、顶层米白）
  */
-function TicketStubVisual({
+const STACK_DEPTH_THEMES = [
+  {
+    rim: '#f1f1ec',
+    body: '#f1f1ec',
+    ink: '#141413',
+  },
+  {
+    rim: '#d64c35',
+    body: '#e2dfd3',
+    ink: '#141413',
+  },
+  {
+    rim: '#90bcc8',
+    body: '#a4cdd7',
+    ink: '#141413',
+  },
+  {
+    rim: '#3671ae',
+    body: '#447eb9',
+    ink: '#f4f4f0',
+  },
+  {
+    rim: '#de7d2c',
+    body: '#dfcf76',
+    ink: '#141413',
+  },
+  {
+    rim: '#222220',
+    body: '#dcd79e',
+    ink: '#141413',
+  },
+  {
+    rim: '#ecebe5',
+    body: '#ecebe5',
+    ink: '#141413',
+  },
+] as const;
+
+/**
+ * 生成稳定的伪随机一维条码竖线宽度序列与数字串
+ */
+function buildBarcodeSpec(seed: string): {
+  hBars: { x: number; w: number }[];
+  vBars: { y: number; h: number }[];
+  digits: string;
+  stubDigits: string;
+} {
+  let h = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  const hBars: { x: number; w: number }[] = [];
+  const vBars: { y: number; h: number }[] = [];
+  let cursorX = 0;
+  let cursorY = 0;
+  let digits = '';
+  let stubDigits = '';
+  for (let i = 0; i < 34; i++) {
+    h ^= i * 37;
+    h = Math.imul(h, 16777619);
+    const u = (h >>> 0) % 10;
+    const w = (u % 3) + 1;
+    if (cursorX <= 136) {
+      hBars.push({ x: cursorX, w: w * 0.95 });
+    }
+    cursorX += w + (i % 2 === 0 ? 1.6 : 2.2);
+
+    if (cursorY <= 206) {
+      vBars.push({ y: cursorY, h: w * 1.2 });
+    }
+    cursorY += w * 1.45 + (i % 3 === 0 ? 2.6 : 1.8);
+
+    if (i < 11) digits += String(u);
+    if (i >= 11 && i < 22) stubDigits += String(u);
+  }
+  return { hBars, vBars, digits, stubDigits };
+}
+
+/**
+ * 生成模切齿孔票根的 SVG 路径（540 × 268 画幅）：
+ * - 左右两侧细密撕口锯齿
+ * - 左侧中央半圆拇指缺口
+ * - x=412 处上下半圆副券撕口缺口
+ */
+function buildTicketClipPath(): string {
+  const W = 540;
+  const H = 268;
+  const stubX = 412;
+  const stubR = 7.5;
+  const leftNotchY = H / 2;
+  const leftNotchR = 12;
+
+  const parts: string[] = [];
+  parts.push('M 3 0');
+  parts.push(`L ${stubX - stubR} 0`);
+  parts.push(`A ${stubR} ${stubR} 0 0 0 ${stubX + stubR} 0`);
+  parts.push(`L ${W - 3} 0`);
+
+  // 右侧细锯齿边缘
+  const teeth = 22;
+  const stepY = H / teeth;
+  for (let i = 0; i < teeth; i++) {
+    const yMid = i * stepY + stepY * 0.5;
+    const yEnd = (i + 1) * stepY;
+    parts.push(`L ${W} ${yMid.toFixed(1)} L ${W - 3} ${yEnd.toFixed(1)}`);
+  }
+
+  // 底边 + 副券下缺口
+  parts.push(`L ${stubX + stubR} ${H}`);
+  parts.push(`A ${stubR} ${stubR} 0 0 0 ${stubX - stubR} ${H}`);
+  parts.push(`L 3 ${H}`);
+
+  // 左侧细锯齿边缘 + 中央半圆缺口
+  for (let i = teeth - 1; i >= 0; i--) {
+    const yStart = (i + 1) * stepY;
+    const yMid = i * stepY + stepY * 0.5;
+    const yEnd = i * stepY;
+
+    if (yStart > leftNotchY - leftNotchR && yEnd < leftNotchY + leftNotchR) {
+      if (yStart >= leftNotchY + leftNotchR) {
+        parts.push(`L 3 ${(leftNotchY + leftNotchR).toFixed(1)}`);
+        parts.push(`A ${leftNotchR} ${leftNotchR} 0 0 0 3 ${(leftNotchY - leftNotchR).toFixed(1)}`);
+      }
+      continue;
+    }
+    parts.push(`L 0 ${yMid.toFixed(1)} L 3 ${yEnd.toFixed(1)}`);
+  }
+
+  parts.push('Z');
+  return parts.join(' ');
+}
+
+const TICKET_CLIP_PATH = buildTicketClipPath();
+
+/**
+ * 模切活版印刷实体票根组件（Concept C 核心视觉载体）
+ */
+function DieCutTicketCard({
   ticket,
-  interactiveTilt = false,
-  className = '',
+  depth,
+  catalogNo,
+  language,
+  typeLabel,
 }: {
   ticket: TicketRecord;
-  interactiveTilt?: boolean;
-  className?: string;
+  depth: number;
+  catalogNo: string;
+  language: string;
+  typeLabel: string;
 }) {
-  const [tilt, setTilt] = useState({ rx: 0, ry: 0, gx: 50, gy: 50, hovering: false });
+  const theme =
+    STACK_DEPTH_THEMES[Math.min(depth, STACK_DEPTH_THEMES.length - 1)] ?? STACK_DEPTH_THEMES[0];
+  const barcode = useMemo(() => buildBarcodeSpec(ticket.id), [ticket.id]);
 
+  const priceDisplay =
+    ticket.priceAmount !== undefined
+      ? ticket.priceCurrency === 'USD'
+        ? `$${ticket.priceAmount.toLocaleString()}`
+        : ticket.priceCurrency === 'CNY'
+          ? `¥${ticket.priceAmount.toLocaleString()}`
+          : `¥${ticket.priceAmount.toLocaleString()}`
+      : 'ADMIT ONE';
+
+  const uid = `tk-${ticket.id.slice(0, 8)}-d${depth}`;
+  const backMaskId = `tk-back-${ticket.id.slice(0, 8)}-d${depth}`;
+
+  return (
+    <svg
+      viewBox="0 0 540 268"
+      className="w-full h-auto block select-none overflow-visible"
+      aria-label={depth === 0 ? ticket.title : undefined}
+    >
+      <title>{ticket.title}</title>
+      <defs>
+        <clipPath id={uid}>
+          <path d={TICKET_CLIP_PATH} />
+        </clipPath>
+        {depth > 0 && (
+          <clipPath id={backMaskId}>
+            <rect x="0" y="0" width="540" height="64" />
+          </clipPath>
+        )}
+      </defs>
+
+      <g clipPath={depth > 0 ? `url(#${backMaskId})` : undefined}>
+        <g clipPath={`url(#${uid})`}>
+          {/* 外层色框（后方层叠票根露出醒目的博朗五色边框） */}
+          <rect x="0" y="0" width="540" height="268" fill={theme.rim} />
+
+          {/* 内层卡纸 */}
+          {depth > 0 && depth < 6 ? (
+            <rect x="6.5" y="5.5" width="527" height="257" rx="1.5" fill={theme.body} />
+          ) : (
+            <rect x="0" y="0" width="540" height="268" fill={theme.body} />
+          )}
+
+          {/* 顶部微高光 */}
+          <line
+            x1="0"
+            y1="0.75"
+            x2="540"
+            y2="0.75"
+            stroke="rgba(255,255,255,0.65)"
+            strokeWidth="1.5"
+          />
+
+          {/* 副券纵向圆孔齿孔线 (x = 412) */}
+          <line
+            x1="412"
+            y1="14"
+            x2="412"
+            y2="254"
+            stroke={depth > 0 ? 'rgba(20,20,19,0.32)' : 'rgba(20,20,19,0.42)'}
+            strokeWidth="2.4"
+            strokeLinecap="round"
+            strokeDasharray="1.5 6.5"
+          />
+
+          {/* 票头左侧品牌名与右侧票价（后方叠卡在顶部露出一半文字，1:1 复刻 Concept C） */}
+          <text
+            x="30"
+            y={depth === 0 ? 38 : 31.5}
+            fill={theme.ink}
+            fontSize={depth === 0 ? 21 : 21}
+            fontWeight="700"
+            letterSpacing="-0.03em"
+            fontFamily="Inter Variable, PingFang SC, Hiragino Sans, sans-serif"
+          >
+            Hanken 半券
+          </text>
+
+          <text
+            x="388"
+            y={depth === 0 ? 35 : 30.5}
+            textAnchor="end"
+            fill={theme.ink}
+            fontSize="12.5"
+            fontWeight="500"
+            fontFamily="JetBrains Mono Variable, monospace"
+            opacity="0.88"
+          >
+            {priceDisplay}
+          </text>
+
+          {/* 正面主票根完整版面细节 */}
+          {depth === 0 && (
+            <>
+              {/* 票种小标 */}
+              <text
+                x="30"
+                y="82"
+                fill="#383834"
+                fontSize="10.5"
+                fontWeight="600"
+                letterSpacing="0.06em"
+                fontFamily="Inter Variable, sans-serif"
+              >
+                {ticket.type.toUpperCase()} · {typeLabel}
+              </text>
+
+              {/* 活动主标题 */}
+              <text
+                x="30"
+                y="112"
+                fill="#141413"
+                fontSize="25"
+                fontWeight="700"
+                letterSpacing="-0.03em"
+                fontFamily="Inter Variable, PingFang SC, Hiragino Sans, sans-serif"
+              >
+                {ticket.title.length > 22 ? `${ticket.title.slice(0, 22)}…` : ticket.title}
+              </text>
+
+              {/* 三行活动副信息 */}
+              <text
+                x="30"
+                y="134"
+                fill="#383834"
+                fontSize="11.5"
+                fontWeight="500"
+                fontFamily="Inter Variable, PingFang SC, Hiragino Sans, sans-serif"
+              >
+                {ticket.subtitle || ticket.venueName || ' archival specimen'}
+              </text>
+              <text
+                x="30"
+                y="151"
+                fill="#383834"
+                fontSize="11.5"
+                fontWeight="500"
+                fontFamily="Inter Variable, PingFang SC, Hiragino Sans, sans-serif"
+              >
+                {[ticket.venueName, ticket.city, ticket.seat].filter(Boolean).join(' · ') || '—'}
+              </text>
+              <text
+                x="30"
+                y="168"
+                fill="#383834"
+                fontSize="11.5"
+                fontWeight="500"
+                fontFamily="Inter Variable, PingFang SC, Hiragino Sans, sans-serif"
+              >
+                {formatEventDateDisplay(ticket.eventAt, language)}
+              </text>
+
+              {/* 左下角横向一维条码 */}
+              <g transform="translate(30, 194)">
+                {barcode.hBars.map((bar) => (
+                  <rect
+                    key={`hb-${bar.x.toFixed(2)}`}
+                    x={bar.x}
+                    y={0}
+                    width={bar.w}
+                    height={34}
+                    fill="#181816"
+                  />
+                ))}
+                <text
+                  x="68"
+                  y="45"
+                  textAnchor="middle"
+                  fill="#2c2c28"
+                  fontSize="9.5"
+                  fontFamily="JetBrains Mono Variable, monospace"
+                  letterSpacing="0.06em"
+                >
+                  {barcode.digits}
+                </text>
+              </g>
+
+              {/* 主券右下角档案号与状态 */}
+              <text
+                x="388"
+                y="239"
+                textAnchor="end"
+                fill={ticket.wear.torn ? '#d94832' : '#2c2c28'}
+                fontSize="11"
+                fontWeight="600"
+                fontFamily="JetBrains Mono Variable, monospace"
+              >
+                {ticket.wear.torn ? `TORN · #${catalogNo}` : `BK #${catalogNo}`}
+              </text>
+
+              {/* 右侧副券纵向条码 */}
+              <g transform="translate(442, 30)">
+                {barcode.vBars.map((bar) => (
+                  <rect
+                    key={`vb-${bar.y.toFixed(2)}`}
+                    x={0}
+                    y={bar.y}
+                    width={42}
+                    height={bar.h}
+                    fill="#181816"
+                  />
+                ))}
+                <text
+                  x="52"
+                  y="104"
+                  textAnchor="middle"
+                  transform="rotate(-90 52 104)"
+                  fill="#2c2c28"
+                  fontSize="9.5"
+                  fontFamily="JetBrains Mono Variable, monospace"
+                  letterSpacing="0.08em"
+                >
+                  {barcode.stubDigits}
+                </text>
+              </g>
+            </>
+          )}
+        </g>
+      </g>
+    </svg>
+  );
+}
+
+/**
+ * 原彩缩略图卡片（供总览网格模式使用）
+ */
+function TicketGraphicThumb({ ticket }: { ticket: TicketRecord }) {
   const thumb = useMemo(() => {
     if (ticket.thumbDataUrl) return ticket.thumbDataUrl;
     try {
-      return renderThumbnailDataUrl(toTicketSpec(ticket), 720);
+      return renderThumbnailDataUrl(toTicketSpec(ticket), 640);
     } catch {
       return '';
     }
@@ -39,72 +424,14 @@ function TicketStubVisual({
     }
   }, [ticket.id, ticket.thumbDataUrl, thumb]);
 
-  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!interactiveTilt) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const nx = (e.clientX - rect.left) / Math.max(1, rect.width);
-    const ny = (e.clientY - rect.top) / Math.max(1, rect.height);
-    setTilt({
-      rx: (0.5 - ny) * 11,
-      ry: (nx - 0.5) * 14,
-      gx: nx * 100,
-      gy: ny * 100,
-      hovering: true,
-    });
-  };
-
-  const handlePointerLeave = () => {
-    if (!interactiveTilt) return;
-    setTilt({ rx: 0, ry: 0, gx: 50, gy: 50, hovering: false });
-  };
-
-  if (!thumb) {
-    return (
-      <div className="aspect-[18/7] w-full rounded-xl bg-bg-subtle flex items-center justify-center font-mono text-xs text-muted">
-        {ticket.title}
-      </div>
-    );
-  }
-
+  if (!thumb) return null;
   return (
-    <div
-      onPointerMove={handlePointerMove}
-      onPointerLeave={handlePointerLeave}
-      style={{
-        perspective: '1100px',
-      }}
-      className={`relative select-none ${className}`}
-    >
-      <div
-        style={{
-          transform: interactiveTilt
-            ? `rotateX(${tilt.rx.toFixed(2)}deg) rotateY(${tilt.ry.toFixed(2)}deg) scale(${tilt.hovering ? 1.015 : 1})`
-            : undefined,
-          transition: tilt.hovering
-            ? 'transform 120ms cubic-bezier(0.16, 1, 0.3, 1)'
-            : 'transform 520ms cubic-bezier(0.16, 1, 0.3, 1)',
-        }}
-        className="relative"
-      >
-        <img
-          src={thumb}
-          alt={ticket.title}
-          draggable={false}
-          className="w-full h-auto max-h-[260px] sm:max-h-[300px] object-contain stub-shadow select-none pointer-events-none"
-        />
-
-        {interactiveTilt && (
-          <div
-            aria-hidden="true"
-            style={{
-              opacity: tilt.hovering ? 0.28 : 0,
-              background: `radial-gradient(circle at ${tilt.gx}% ${tilt.gy}%, rgba(255,255,255,0.85), transparent 58%)`,
-            }}
-            className="pointer-events-none absolute inset-0 rounded-xl mix-blend-overlay transition-opacity duration-300"
-          />
-        )}
-      </div>
-    </div>
+    <img
+      src={thumb}
+      alt={ticket.title}
+      draggable={false}
+      className="w-full h-auto max-h-[200px] object-contain stub-shadow select-none"
+    />
   );
 }
 
@@ -115,75 +442,62 @@ export function TimelineView() {
   const setTimelineView = useUiStore((s) => s.setTimelineView);
 
   const [typeFilter, setTypeFilter] = useState<TicketType | 'all'>('all');
-  const [yearFilter, setYearFilter] = useState<number | 'all'>('all');
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
-  const [dragX, setDragX] = useState(0);
+  const [wheelTicks, setWheelTicks] = useState(0);
+  const [dragY, setDragY] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
+  const [showFilterBar, setShowFilterBar] = useState(false);
 
-  const dragStartRef = useRef<{ x: number; t: number; moved: boolean } | null>(null);
+  const dragStartRef = useRef<{ y: number; t: number; moved: boolean } | null>(null);
   const wheelLockRef = useRef<number>(0);
 
   const allActive = useLiveQuery(
-    () =>
-      db.tickets
-        .where('status')
-        .equals('status' in db.tickets ? 'active' : 'active')
-        .toArray(),
+    () => db.tickets.where('status').equals('active').toArray(),
     [],
     [] as TicketRecord[],
   );
 
-  // 按时间倒序排列（最新在最前）
+  // 按时间倒序排列
   const sortedActive = useMemo(
     () => [...allActive].sort((a, b) => b.eventAt.localeCompare(a.eventAt)),
     [allActive],
   );
 
-  const availableYears = useMemo(() => {
-    const s = new Set<number>();
-    for (const tk of sortedActive) {
-      s.add(getYearMonthKey(tk.eventAt).year);
-    }
-    return Array.from(s).sort((a, b) => b - a);
-  }, [sortedActive]);
-
-  const countsByType = useMemo(() => {
-    const map: Partial<Record<TicketType, number>> = {};
-    for (const tk of sortedActive) {
-      map[tk.type] = (map[tk.type] ?? 0) + 1;
-    }
-    return map;
-  }, [sortedActive]);
-
   const filtered = useMemo(
     () =>
       filterTickets(sortedActive, {
         type: typeFilter,
-        year: yearFilter,
+        year: 'all',
         tag: 'all',
         query,
       }),
-    [sortedActive, typeFilter, yearFilter, query],
+    [sortedActive, typeFilter, query],
   );
 
-  // 当筛选结果变化时，确保 activeIndex 不越界
-  const safeIndex =
-    filtered.length === 0 ? 0 : Math.min(Math.max(0, activeIndex), filtered.length - 1);
+  const total = filtered.length;
+  const safeIndex = total === 0 ? 0 : ((activeIndex % total) + total) % total;
   const activeTicket = filtered[safeIndex] ?? null;
 
   const stepBy = useCallback(
     (delta: number) => {
-      if (filtered.length === 0) return;
-      setActiveIndex((prev) => {
-        const base = Math.min(Math.max(0, prev), filtered.length - 1);
-        return Math.min(Math.max(0, base + delta), filtered.length - 1);
-      });
+      if (total <= 1) return;
+      setActiveIndex((prev) => (((prev + delta) % total) + total) % total);
+      setWheelTicks((prev) => prev + delta);
     },
-    [filtered.length],
+    [total],
   );
 
-  // 键盘左右方向键切换票根
+  // 响应底部 Dock 再次点击首页图标切换 3D 叠卡 / 总览网格
+  useEffect(() => {
+    const onToggleView = () => {
+      setTimelineView(timelineView === 'stack' ? 'grid' : 'stack');
+    };
+    window.addEventListener('mogiri:toggle-home-view', onToggleView);
+    return () => window.removeEventListener('mogiri:toggle-home-view', onToggleView);
+  }, [timelineView, setTimelineView]);
+
+  // 键盘上下/左右方向键翻动叠卡
   useEffect(() => {
     if (timelineView !== 'stack') return;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -193,10 +507,10 @@ export function TimelineView() {
       ) {
         return;
       }
-      if (e.key === 'ArrowRight') {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
         e.preventDefault();
         stepBy(1);
-      } else if (e.key === 'ArrowLeft') {
+      } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
         e.preventDefault();
         stepBy(-1);
       }
@@ -205,187 +519,165 @@ export function TimelineView() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [timelineView, stepBy]);
 
-  // 触控板双指滑动 / 鼠标滚轮顺滑翻票
-  const handleStageWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    if (filtered.length <= 1) return;
+  // 鼠标滚轮 / 触控板顺滑翻动卡槽
+  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (total <= 1) return;
     const now = performance.now();
-    if (now - wheelLockRef.current < 210) return;
-    const primaryDelta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-    if (Math.abs(primaryDelta) < 14) return;
+    if (now - wheelLockRef.current < 190) return;
+    const primary = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+    if (Math.abs(primary) < 12) return;
     wheelLockRef.current = now;
-    stepBy(primaryDelta > 0 ? 1 : -1);
+    stepBy(primary > 0 ? 1 : -1);
   };
 
-  // 指针拖拽手势
-  const handleStagePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (filtered.length <= 1) return;
-    dragStartRef.current = { x: e.clientX, t: performance.now(), moved: false };
+  // 上下拖拽手势（同时支持在叠卡与右侧金属滚轮上拖拽）
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (total <= 1) return;
+    dragStartRef.current = { y: e.clientY, t: performance.now(), moved: false };
     setIsDragging(true);
   };
 
-  const handleStagePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const start = dragStartRef.current;
     if (!start) return;
-    const dx = e.clientX - start.x;
-    if (Math.abs(dx) > 6) start.moved = true;
-    setDragX(dx);
+    const dy = e.clientY - start.y;
+    if (Math.abs(dy) > 5) start.moved = true;
+    setDragY(dy);
   };
 
-  const handleStagePointerEnd = () => {
+  const handlePointerEnd = () => {
     const start = dragStartRef.current;
     if (!start) return;
     const dt = Math.max(16, performance.now() - start.t);
-    const velocity = dragX / dt;
-    if (dragX < -55 || velocity < -0.35) {
+    const velocity = dragY / dt;
+    if (dragY > 38 || velocity > 0.28) {
       stepBy(1);
-    } else if (dragX > 55 || velocity > 0.35) {
+    } else if (dragY < -38 || velocity < -0.28) {
       stepBy(-1);
     }
     dragStartRef.current = null;
-    setDragX(0);
+    setDragY(0);
     setIsDragging(false);
   };
 
-  const hasActiveFilters = typeFilter !== 'all' || yearFilter !== 'all' || query.trim() !== '';
+  // 生成纵向叠卡序列（前排 1 张 + 后方 6 层景深叠卡：5 色工业边框 + 顶层米白卡）
+  const visibleStack = useMemo(() => {
+    if (total === 0) return [];
+    const maxLayers = 7;
+    const layers: { depth: number; ticket: TicketRecord; itemIndex: number }[] = [];
+    for (let d = maxLayers - 1; d >= 0; d--) {
+      const idx = (safeIndex + d) % total;
+      const tk = filtered[idx];
+      if (tk) {
+        layers.push({ depth: d, ticket: tk, itemIndex: idx });
+      }
+    }
+    return layers;
+  }, [filtered, safeIndex, total]);
 
-  const resetFilters = () => {
-    setTypeFilter('all');
-    setYearFilter('all');
-    setQuery('');
-    setActiveIndex(0);
-  };
+  // 右侧刻度尺的 4 个月份标签（自上而下 AUG · SEP · OCT · NOV，红线居中介于 SEP 与 OCT 之间）
+  const dialMonths = useMemo(() => {
+    const activeMonthNum = activeTicket ? Number(activeTicket.eventAt.slice(5, 7)) || 10 : 10;
+    const m0 = MONTH_ABBR[(activeMonthNum - 1 + 12) % 12] ?? 'OCT';
+    const mPrev1 = MONTH_ABBR[(activeMonthNum - 2 + 12) % 12] ?? 'SEP';
+    const mPrev2 = MONTH_ABBR[(activeMonthNum - 3 + 12) % 12] ?? 'AUG';
+    const mNext1 = MONTH_ABBR[activeMonthNum % 12] ?? 'NOV';
+    return [
+      { label: mPrev2, step: 2, y: 44, opacity: 0.34, weight: 600 },
+      { label: mPrev1, step: 1, y: 106, opacity: 0.68, weight: 700 },
+      { label: m0, step: 0, y: 170, opacity: 0.92, weight: 700 },
+      { label: mNext1, step: -1, y: 232, opacity: 0.28, weight: 500 },
+    ];
+  }, [activeTicket]);
+
+  const hasActiveFilters = typeFilter !== 'all' || query.trim() !== '';
 
   return (
-    <div className="flex-1 flex flex-col px-5 sm:px-8 py-5 sm:py-6 max-w-[1400px] w-full mx-auto">
-      {/* 1. 顶部极简标题与筛选胶囊栏（recent.design 风格） */}
-      <header className="space-y-4 shrink-0">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-baseline gap-3">
-            <h1 className="text-[19px] font-semibold tracking-[-0.02em] text-fg">
-              {t('nav.archive')}
-            </h1>
-            <span className="text-[13.5px] text-muted hidden sm:inline">{t('home.heroLead')}</span>
-          </div>
-
-          <div className="flex items-center gap-2.5">
-            {/* 搜索胶囊 */}
-            <div className="relative flex items-center">
-              <svg
-                width="13"
-                height="13"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-                className="absolute left-3 text-faint pointer-events-none"
-              >
-                <circle cx="11" cy="11" r="8" />
-                <path d="m21 21-4.3-4.3" />
-              </svg>
-              <input
-                type="search"
-                value={query}
-                onChange={(e) => {
-                  setQuery(e.target.value);
-                  setActiveIndex(0);
-                }}
-                placeholder={t('home.searchPlaceholder')}
-                aria-label={t('home.searchPlaceholder')}
-                className="h-8 w-36 sm:w-48 rounded-full bg-bg-subtle pl-8 pr-3.5 text-[12.5px] text-fg placeholder:text-faint focus:bg-bg-raised focus:outline-none focus:ring-2 focus:ring-black/10 transition-all"
-              />
-            </div>
-
-            {/* 滑动 / 网格切换 */}
-            <Segmented
-              value={timelineView}
-              onChange={(v) => setTimelineView(v)}
-              ariaLabel="View mode"
-              options={[
-                { value: 'stack', label: t('home.viewTable') },
-                { value: 'grid', label: t('home.viewIndex') },
-              ]}
-            />
-          </div>
-        </div>
-
-        {/* 分类胶囊条 */}
-        <div className="flex items-center justify-between gap-4 overflow-x-auto no-scrollbar pb-1">
-          <div className="flex items-center gap-1.5 shrink-0">
+    <div
+      onWheel={timelineView === 'stack' ? handleWheel : undefined}
+      className="flex-1 flex flex-col justify-between px-4 sm:px-8 relative select-none overflow-hidden"
+    >
+      {/* 总览网格模式下浮现的轻量筛选胶囊栏 */}
+      <AnimatePresence>
+        {(timelineView === 'grid' || showFilterBar) && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.2 }}
+            className="mx-auto mt-2 z-20 frosted-dock rounded-full px-3 py-1.5 flex flex-wrap items-center justify-center gap-1.5"
+          >
             <button
               type="button"
               onClick={() => {
                 setTypeFilter('all');
                 setActiveIndex(0);
               }}
-              className={`h-8 rounded-full px-3.5 text-[13px] font-medium transition-colors cursor-pointer ${
-                typeFilter === 'all'
-                  ? 'bg-fg text-bg-raised'
-                  : 'bg-bg-subtle text-muted hover:text-fg hover:bg-[#e8e8e5]'
+              className={`h-7 rounded-full px-3 text-[12px] font-medium transition-colors cursor-pointer ${
+                typeFilter === 'all' ? 'bg-fg text-bg-raised' : 'text-muted hover:text-fg'
               }`}
             >
               {t('types.all')}
             </button>
-
-            {TICKET_TYPES.map((tp) => {
-              const count = countsByType[tp] ?? 0;
-              if (count === 0 && typeFilter !== tp) return null;
-              const active = typeFilter === tp;
-              return (
-                <button
-                  key={tp}
-                  type="button"
-                  onClick={() => {
-                    setTypeFilter(tp);
-                    setActiveIndex(0);
-                  }}
-                  className={`h-8 rounded-full px-3.5 text-[13px] font-medium transition-colors cursor-pointer ${
-                    active
-                      ? 'bg-fg text-bg-raised'
-                      : 'bg-bg-subtle text-muted hover:text-fg hover:bg-[#e8e8e5]'
-                  }`}
-                >
-                  {t(`types.${tp}`)}
-                </button>
-              );
-            })}
-          </div>
-
-          {availableYears.length > 0 && (
-            <div className="flex items-center gap-2 shrink-0">
-              <select
-                value={yearFilter}
-                onChange={(e) => {
-                  setYearFilter(e.target.value === 'all' ? 'all' : Number(e.target.value));
+            {TICKET_TYPES.map((tp) => (
+              <button
+                key={tp}
+                type="button"
+                onClick={() => {
+                  setTypeFilter(tp);
                   setActiveIndex(0);
                 }}
-                aria-label={t('home.yearAll')}
-                className="h-8 rounded-full bg-bg-subtle px-3 text-[12.5px] font-medium text-muted hover:text-fg cursor-pointer border-0 focus:outline-none"
+                className={`h-7 rounded-full px-3 text-[12px] font-medium transition-colors cursor-pointer ${
+                  typeFilter === tp ? 'bg-fg text-bg-raised' : 'text-muted hover:text-fg'
+                }`}
               >
-                <option value="all">{t('home.yearAll')}</option>
-                {availableYears.map((yr) => (
-                  <option key={yr} value={yr}>
-                    {yr}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-        </div>
-      </header>
+                {t(`types.${tp}`)}
+              </button>
+            ))}
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setActiveIndex(0);
+              }}
+              placeholder={t('home.searchPlaceholder')}
+              aria-label={t('home.searchPlaceholder')}
+              className="h-7 w-32 rounded-full bg-black/[0.05] px-3 text-[12px] text-fg placeholder:text-muted focus:bg-bg-raised focus:outline-none"
+            />
+            {timelineView === 'grid' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setTimelineView('stack');
+                  setShowFilterBar(false);
+                }}
+                className="h-7 rounded-full bg-black/[0.06] hover:bg-black/[0.12] px-3 text-[12px] font-medium text-fg transition-colors cursor-pointer"
+              >
+                {t('home.viewTable')}
+              </button>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      {/* 2. 主体区域 */}
-      {filtered.length === 0 ? (
+      {total === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center py-20 text-center space-y-4">
-          <div className="text-[20px] font-semibold tracking-[-0.02em] text-fg">
+          <div className="text-[18px] font-semibold text-fg">
             {hasActiveFilters ? t('home.emptyFiltered') : t('home.emptyTitle')}
           </div>
-          <p className="text-[13.5px] text-muted max-w-sm">{t('home.emptyHint')}</p>
+          <p className="text-[13px] text-muted max-w-sm">{t('home.emptyHint')}</p>
           <div className="pt-1">
             {hasActiveFilters ? (
-              <button type="button" onClick={resetFilters} className={btnClass('outline')}>
+              <button
+                type="button"
+                onClick={() => {
+                  setTypeFilter('all');
+                  setQuery('');
+                  setActiveIndex(0);
+                }}
+                className={btnClass('outline')}
+              >
                 {t('home.clearFilters')}
               </button>
             ) : (
@@ -396,244 +688,184 @@ export function TimelineView() {
           </div>
         </div>
       ) : timelineView === 'stack' ? (
-        /* 视图 A：顺滑水平滑动检视画廊（Coverflow + 底部刻度转盘） */
+        /* Concept C 主舞台：中央 3D 纵向景深叠卡 + 右侧博朗机械滚轮刻度尺 */
         <div
-          onWheel={handleStageWheel}
-          onPointerDown={handleStagePointerDown}
-          onPointerMove={handleStagePointerMove}
-          onPointerUp={handleStagePointerEnd}
-          onPointerCancel={handleStagePointerEnd}
-          className="flex-1 flex flex-col justify-between py-4 sm:py-6 overflow-hidden select-none touch-pan-y"
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerEnd}
+          onPointerCancel={handlePointerEnd}
+          className="flex-1 flex items-center justify-center py-4 touch-none"
         >
-          {/* 中央滑动轨道（两侧渐隐遮罩 + 无重叠呼吸间距） */}
-          <div
-            style={{
-              maskImage:
-                'linear-gradient(to right, transparent 0%, black 7%, black 93%, transparent 100%)',
-              WebkitMaskImage:
-                'linear-gradient(to right, transparent 0%, black 7%, black 93%, transparent 100%)',
-            }}
-            className="relative flex-1 flex items-center justify-center min-h-[290px] sm:min-h-[360px]"
-          >
-            {/* 票根卡片序列（基于相对偏移的弹簧动画） */}
-            <div className="relative w-full h-full flex items-center justify-center">
-              {filtered.map((ticket, idx) => {
-                const offset = idx - safeIndex;
-                if (Math.abs(offset) > 2) return null;
-                const isCenter = offset === 0;
-                const baseShiftPct = offset * 106;
+          <div className="relative flex items-center justify-center w-full max-w-[940px]">
+            {/* 中央纵向 Z 轴景深卡槽 */}
+            <div className="relative w-full max-w-[540px] h-[350px] sm:h-[420px] flex items-end justify-center pb-2">
+              {visibleStack.map(({ depth, ticket, itemIndex }) => {
+                const isFront = depth === 0;
+                const scale = 1 - depth * 0.042;
+                let stepSum = 0;
+                for (let k = 1; k <= depth; k++) {
+                  stepSum += 8.65 * (1 - k * 0.042);
+                }
+                const yPercent = -stepSum + (isFront && isDragging ? dragY * 0.12 : 0);
+                const catalogNo = String(total - itemIndex).padStart(3, '0');
 
                 return (
                   <motion.div
-                    key={ticket.id}
+                    key={`${ticket.id}-d${depth}`}
+                    data-ticket-id={isFront ? ticket.id : undefined}
                     initial={false}
                     animate={{
-                      x: `calc(${baseShiftPct}% + ${isDragging ? dragX : 0}px)`,
-                      scale: isCenter ? 1 : Math.abs(offset) === 1 ? 0.84 : 0.72,
-                      opacity: isCenter ? 1 : Math.abs(offset) === 1 ? 0.42 : 0.12,
-                      rotateZ: isCenter ? 0 : offset * 1.5,
-                      y: isCenter ? 0 : Math.abs(offset) * 10,
+                      y: `${yPercent}%`,
+                      scale,
+                      opacity: depth > 6 ? 0 : 1,
                     }}
                     transition={
                       isDragging
                         ? { duration: 0 }
-                        : { type: 'spring', stiffness: 290, damping: 32, mass: 0.85 }
+                        : { type: 'spring', stiffness: 330, damping: 30, mass: 0.82 }
                     }
                     style={{
-                      zIndex: 10 - Math.abs(offset),
+                      zIndex: 20 - depth,
+                      transformOrigin: '50% 0%',
                     }}
                     onClick={() => {
                       if (dragStartRef.current?.moved) return;
-                      if (isCenter) {
+                      if (isFront) {
                         void navigate({ to: '/t/$id', params: { id: ticket.id } });
                       } else {
-                        setActiveIndex(idx);
+                        stepBy(depth);
                       }
                     }}
-                    className="absolute w-[84%] max-w-[560px] cursor-pointer"
+                    className={`absolute bottom-2 w-full cursor-pointer ${
+                      isFront
+                        ? 'rolodex-shadow'
+                        : 'drop-shadow-[0_-2px_5px_rgba(0,0,0,0.10)] hover:brightness-[1.02] transition-all'
+                    }`}
                   >
-                    <TicketStubVisual ticket={ticket} interactiveTilt={isCenter} />
+                    <DieCutTicketCard
+                      ticket={ticket}
+                      depth={depth}
+                      catalogNo={catalogNo}
+                      language={i18n.language}
+                      typeLabel={t(`types.${ticket.type}`)}
+                    />
                   </motion.div>
                 );
               })}
             </div>
-          </div>
 
-          {/* 当前票根说明与底部刻度尺转盘（参考 recent.design 刻度表交互） */}
-          {activeTicket && (
-            <div className="shrink-0 flex flex-col items-center gap-6 pt-2">
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={activeTicket.id}
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -6 }}
-                  transition={{ duration: 0.22 }}
-                  className="text-center space-y-2 max-w-xl px-4"
-                >
-                  <div className="inline-flex flex-wrap items-center justify-center gap-2 text-[12px] font-mono text-muted">
-                    <span>{formatEventDateDisplay(activeTicket.eventAt, i18n.language)}</span>
-                    {activeTicket.venueName && (
-                      <>
-                        <span>·</span>
-                        <span>{activeTicket.venueName}</span>
-                      </>
-                    )}
-                    {activeTicket.seat && (
-                      <>
-                        <span>·</span>
-                        <span>{activeTicket.seat}</span>
-                      </>
-                    )}
-                    {activeTicket.wear.torn && (
-                      <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10.5px] font-medium text-accent">
-                        {t('home.torn')}
-                      </span>
-                    )}
-                  </div>
+            {/* 右侧：博朗机械滚花转轮 + 蚀刻毫米尺 + 纵向月份刻度 + 朱红指针线（Concept C 1:1 复刻） */}
+            <div
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerEnd}
+              className="hidden sm:flex items-center ml-12 lg:ml-16 relative py-4 cursor-ns-resize select-none"
+              title="Scroll or drag thumbwheel to flip tickets"
+            >
+              {/* 精密 SVG 毫米刻度尺 + 纵向旋转月份 + 朱红水平指针线 */}
+              <svg
+                width="62"
+                height="276"
+                viewBox="0 0 62 276"
+                className="block overflow-visible"
+                aria-hidden="true"
+              >
+                {/* 65 条精密水平毫米刻度线（上下两端渐隐） */}
+                {Array.from({ length: 65 }).map((_, idx) => {
+                  const y = 10 + idx * 4;
+                  const isMajor = idx % 4 === 0;
+                  const edgeFade = Math.min(1, Math.min(idx + 1, 65 - idx) / 7);
+                  return (
+                    <line
+                      key={`ruler-tick-${y}`}
+                      x1={isMajor ? 11 : 16}
+                      y1={y}
+                      x2={22}
+                      y2={y}
+                      stroke="#191918"
+                      strokeWidth={isMajor ? '1.1' : '0.85'}
+                      strokeOpacity={(isMajor ? 0.38 : 0.22) * edgeFade}
+                    />
+                  );
+                })}
 
-                  <div className="flex items-center justify-center gap-3">
-                    <Link
-                      to="/t/$id"
-                      params={{ id: activeTicket.id }}
-                      className="group inline-flex items-center gap-2 text-[22px] sm:text-[26px] font-semibold tracking-[-0.025em] text-fg hover:opacity-75 transition-opacity"
+                {/* 纵向旋转月份标签（AUG · SEP · OCT · NOV） */}
+                {dialMonths.map((m) => (
+                  // biome-ignore lint/a11y/noStaticElementInteractions: 刻度盘鼠标辅助点击跳转（键盘已由全局方向键监听处理）
+                  <g
+                    key={`dial-svg-${m.step}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (m.step !== 0) stepBy(m.step);
+                    }}
+                    className="cursor-pointer"
+                  >
+                    <text
+                      x="38"
+                      y={m.y}
+                      transform={`rotate(-90 38 ${m.y})`}
+                      textAnchor="middle"
+                      dominantBaseline="central"
+                      fill="#191918"
+                      fillOpacity={m.opacity}
+                      fontSize="15.5"
+                      fontWeight={m.weight}
+                      letterSpacing="0.08em"
+                      fontFamily="Inter Variable, sans-serif"
                     >
-                      <span>{activeTicket.title}</span>
-                      <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-bg-subtle text-[13px] text-muted group-hover:bg-fg group-hover:text-bg-raised transition-colors">
-                        ↗
-                      </span>
-                    </Link>
-                  </div>
-                </motion.div>
-              </AnimatePresence>
+                      {m.label}
+                    </text>
+                  </g>
+                ))}
 
-              {/* 精密刻度尺控制器（Tick-Mark Dial + 左右微调步进器） */}
-              <div className="flex flex-col items-center gap-2.5 w-full max-w-md">
-                {/* 顶部悬浮黑色胶囊读数 */}
-                <div className="inline-flex items-center gap-2 rounded-full bg-fg px-3 py-1 text-[11px] font-mono font-medium text-bg-raised shadow-sm">
-                  <span>
-                    {String(safeIndex + 1).padStart(2, '0')} /{' '}
-                    {String(filtered.length).padStart(2, '0')}
-                  </span>
-                  <span className="opacity-40">·</span>
-                  <span>{activeTicket.eventAt.slice(0, 10).replace(/-/g, '.')}</span>
-                </div>
+                {/* 月份之间的三枚圆点分隔符 */}
+                <circle cx="38" cy="75" r="1.4" fill="#191918" fillOpacity="0.35" />
+                <circle cx="38" cy="138" r="1.5" fill="#191918" fillOpacity="0.85" />
+                <circle cx="38" cy="201" r="1.4" fill="#191918" fillOpacity="0.35" />
 
-                {/* 刻度线阵列与左右翻票按钮 */}
-                <div className="flex items-center justify-center gap-3">
-                  <button
-                    type="button"
-                    aria-label="Previous ticket"
-                    disabled={safeIndex === 0}
-                    onClick={() => stepBy(-1)}
-                    className="h-7 w-7 rounded-full bg-bg-subtle text-muted hover:text-fg hover:bg-[#e8e8e5] flex items-center justify-center text-xs transition-all disabled:opacity-25 disabled:pointer-events-none cursor-pointer"
-                  >
-                    ←
-                  </button>
+                {/* 贯穿刻度尺与中心点的朱红机械指针线（精准指向金属滚轮正中央 y=138） */}
+                <line x1="0" y1="138" x2="62" y2="138" stroke="#d64c35" strokeWidth="1.5" />
+              </svg>
 
-                  <div
-                    role="tablist"
-                    aria-label="Ticket timeline scrubber"
-                    className="flex items-center justify-center gap-1.5 py-1 px-2"
-                  >
-                    {filtered.map((tk, idx) => {
-                      const active = idx === safeIndex;
-                      return (
-                        <div key={tk.id} className="flex items-center gap-1.5">
-                          {idx > 0 && (
-                            <>
-                              <span className="h-2 w-[1.5px] rounded-full bg-black/10" />
-                              <span className="h-2.5 w-[1.5px] rounded-full bg-black/10" />
-                              <span className="h-2 w-[1.5px] rounded-full bg-black/10" />
-                            </>
-                          )}
-                          <button
-                            type="button"
-                            role="tab"
-                            aria-selected={active}
-                            aria-label={tk.title}
-                            onClick={() => setActiveIndex(idx)}
-                            className="group py-2 px-1 cursor-pointer flex items-center justify-center"
-                          >
-                            <span
-                              className={`rounded-full transition-all duration-300 ${
-                                active
-                                  ? 'h-6 w-[2.5px] bg-fg'
-                                  : 'h-3.5 w-[2px] bg-black/22 group-hover:h-5 group-hover:bg-black/55'
-                              }`}
-                            />
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <button
-                    type="button"
-                    aria-label="Next ticket"
-                    disabled={safeIndex === filtered.length - 1}
-                    onClick={() => stepBy(1)}
-                    className="h-7 w-7 rounded-full bg-bg-subtle text-muted hover:text-fg hover:bg-[#e8e8e5] flex items-center justify-center text-xs transition-all disabled:opacity-25 disabled:pointer-events-none cursor-pointer"
-                  >
-                    →
-                  </button>
-                </div>
+              {/* 机械滚轮凹槽与金属滚花转轮（与 y=138 垂直居中对齐） */}
+              <div className="w-[13px] h-[168px] rounded-full wheel-trough flex items-center justify-center relative -ml-[1px]">
+                <div
+                  style={{
+                    backgroundPositionY: `${wheelTicks * 7 + (isDragging ? dragY * 0.4 : 0)}px, 0px`,
+                  }}
+                  className="w-[10.5px] h-[94px] rounded-[4px] knurled-wheel transition-[background-position] duration-150"
+                />
               </div>
             </div>
-          )}
+          </div>
         </div>
       ) : (
-        /* 视图 B：纯净画廊网格（recent.design 卡片网格风格） */
-        <div className="pt-6 pb-12 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-          {filtered.map((ticket) => {
-            const tilt = stubTilt(ticket.id, 1.2);
-            return (
-              <Link
-                key={ticket.id}
-                to="/t/$id"
-                params={{ id: ticket.id }}
-                className="group relative flex flex-col justify-between rounded-[20px] bg-bg-raised border border-line p-5 hover:border-line-strong hover:shadow-[0_12px_32px_rgba(0,0,0,0.05)] transition-all duration-300"
-              >
-                {/* 柔和内衬展示台 */}
-                <div className="rounded-2xl bg-bg-subtle/75 p-5 flex items-center justify-center min-h-[190px] overflow-hidden">
-                  <div
-                    style={{ transform: `rotate(${tilt}deg)` }}
-                    className="w-full transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:rotate-0 group-hover:scale-[1.03]"
-                  >
-                    <TicketStubVisual ticket={ticket} />
-                  </div>
-                </div>
+        /* 总览网格模式 */
+        <div className="max-w-[1160px] w-full mx-auto pt-4 pb-12 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 overflow-y-auto">
+          {filtered.map((ticket) => (
+            <Link
+              key={ticket.id}
+              to="/t/$id"
+              params={{ id: ticket.id }}
+              className="group rounded-[20px] bg-bg-raised border border-line p-5 flex flex-col justify-between gap-4 hover:border-line-strong transition-all"
+            >
+              <div className="rounded-xl bg-bg-subtle/60 p-4 flex items-center justify-center min-h-[170px]">
+                <TicketGraphicThumb ticket={ticket} />
+              </div>
 
-                {/* 卡片底栏（左侧标题与日期，右侧 recent.design 圆形外链箭头） */}
-                <div className="pt-4 flex items-end justify-between gap-3">
-                  <div className="min-w-0 space-y-1">
-                    <div className="flex items-center gap-2 text-[11.5px] font-mono text-muted">
-                      <span>{ticket.eventAt.slice(0, 10).replace(/-/g, '.')}</span>
-                      {ticket.city && (
-                        <>
-                          <span>·</span>
-                          <span>{ticket.city}</span>
-                        </>
-                      )}
-                      {ticket.wear.torn && (
-                        <span className="text-accent font-sans font-medium">{t('home.torn')}</span>
-                      )}
-                    </div>
-                    <h3 className="text-[16px] font-semibold tracking-[-0.015em] text-fg truncate">
-                      {ticket.title}
-                    </h3>
+              <div className="flex items-end justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-mono text-[11px] text-muted">
+                    {ticket.eventAt.slice(0, 10).replace(/-/g, '.')} · {ticketTypeCode(ticket.type)}
                   </div>
-
-                  <div className="flex items-center gap-2.5 shrink-0">
-                    {ticket.rating !== undefined && <RatingDots value={ticket.rating} />}
-                    <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-bg-subtle text-[12px] text-muted group-hover:bg-fg group-hover:text-bg-raised transition-colors">
-                      ↗
-                    </span>
-                  </div>
+                  <h3 className="text-[15.5px] font-semibold text-fg truncate mt-0.5">
+                    {ticket.title}
+                  </h3>
                 </div>
-              </Link>
-            );
-          })}
+                {ticket.rating !== undefined && <RatingDots value={ticket.rating} />}
+              </div>
+            </Link>
+          ))}
         </div>
       )}
     </div>

@@ -1,12 +1,8 @@
 import type { TicketType } from '@mogiri/shared';
 import { Link, Outlet, useRouterState } from '@tanstack/react-router';
-import { useLiveQuery } from 'dexie-react-hooks';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { db } from '../data';
-import { SUPPORTED_LOCALES, type SupportedLocale, setAppLocale } from '../i18n';
 import { GlobalTicketStageHost } from './GlobalTicketStageHost';
-import { btnClass } from './primitives';
 
 const TYPE_CODES: Record<TicketType, string> = {
   flight: 'FLT',
@@ -24,46 +20,17 @@ export function ticketTypeCode(type: string): string {
 }
 
 export function AppShell({ children }: { children?: ReactNode }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
-  const activeCount = useLiveQuery(
-    async () => await db.tickets.where('status').equals('active').count(),
-    [],
-    0,
-  );
-
-  const navItems = [
-    {
-      to: '/',
-      label: t('nav.archive'),
-      badge: activeCount > 0 ? String(activeCount) : undefined,
-      active: pathname === '/' || (pathname.startsWith('/t/') && pathname !== '/t/new/edit'),
-    },
-    {
-      to: '/scan',
-      label: t('nav.scan'),
-      active: pathname.startsWith('/scan'),
-    },
-    {
-      to: '/recap/2026',
-      label: t('nav.recap'),
-      active: pathname.startsWith('/recap'),
-    },
-    {
-      to: '/map',
-      label: t('nav.atlas'),
-      active: pathname === '/map',
-    },
-    {
-      to: '/settings',
-      label: t('nav.settings'),
-      active: pathname === '/settings',
-    },
-  ];
+  const isHome = pathname === '/';
+  const isScan = pathname.startsWith('/scan');
+  const isNew = pathname === '/t/new/edit';
+  const isRecapOrMap = pathname.startsWith('/recap') || pathname === '/map';
+  const isSettings = pathname === '/settings';
 
   return (
-    <div className="min-h-dvh flex flex-col md:flex-row bg-bg text-fg pb-16 md:pb-0">
+    <div className="min-h-dvh flex flex-col text-fg pb-24">
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:bg-fg focus:text-bg-raised focus:px-4 focus:py-2 focus:rounded-full focus:text-xs"
@@ -71,152 +38,203 @@ export function AppShell({ children }: { children?: ReactNode }) {
         {t('app.skip')}
       </a>
 
-      {/* 桌面端左侧极简导览栏（recent.design 风格） */}
-      <aside className="hidden md:flex md:w-[216px] md:shrink-0 md:flex-col md:justify-between md:sticky md:top-0 md:h-dvh px-5 py-5 select-none border-r border-line bg-bg">
-        <div className="space-y-8">
-          {/* 顶部几何半券标志 + 新建胶囊按钮 */}
-          <div className="flex items-center justify-between gap-2">
-            <Link
-              to="/"
-              aria-label={t('app.name')}
-              className="inline-flex items-center gap-2.5 group"
-            >
-              <svg
-                width="26"
-                height="26"
-                viewBox="0 0 32 32"
-                fill="none"
-                aria-hidden="true"
-                className="text-fg transition-transform duration-300 group-hover:scale-105"
-              >
-                <path
-                  d="M2 5C2 3.34315 3.34315 2 5 2H27C28.6569 2 30 3.34315 30 5V12.5C27.5147 12.5 25.5 14.5147 25.5 17C25.5 19.4853 27.5147 21.5 30 21.5V27C30 28.6569 28.6569 30 27 30H5C3.34315 30 2 28.6569 2 27V21.5C4.48528 21.5 6.5 19.4853 6.5 17C6.5 14.5147 4.48528 12.5 2 12.5V5Z"
-                  fill="currentColor"
-                />
-                <circle cx="21" cy="17" r="1.4" fill="var(--bg)" />
-                <circle cx="21" cy="11.5" r="1.4" fill="var(--bg)" />
-                <circle cx="21" cy="22.5" r="1.4" fill="var(--bg)" />
-              </svg>
-              <span className="text-[15px] font-semibold tracking-[-0.02em] text-fg">
-                {t('app.name')}
-              </span>
-            </Link>
+      {/* 顶部极简居中标题（Concept C 1:1 复刻：纯粹无干扰的留白画布） */}
+      <header className="relative z-30 pt-8 pb-2 px-6 flex items-center justify-center select-none">
+        <Link
+          to="/"
+          className="text-[24px] sm:text-[26px] font-semibold tracking-[-0.025em] text-fg hover:opacity-80 transition-opacity"
+        >
+          Hanken {t('app.name')}
+        </Link>
+      </header>
 
-            <Link to="/t/new/edit" className={btnClass('outline', 'h-7 px-3 text-[12px]')}>
-              + {t('nav.new')}
+      {/* 统计与足迹二级切换胶囊（当处于回顾或地图页时浮现） */}
+      {isRecapOrMap && (
+        <div className="flex justify-center pt-1 pb-2">
+          <div className="inline-flex items-center rounded-full bg-black/[0.05] p-0.5 border border-line">
+            <Link
+              to="/recap/$year"
+              params={{ year: '2026' }}
+              className={`h-7 px-3.5 rounded-full text-[12px] font-medium flex items-center transition-all ${
+                pathname.startsWith('/recap')
+                  ? 'bg-bg-raised text-fg shadow-[0_1px_2px_rgba(0,0,0,0.08)]'
+                  : 'text-muted hover:text-fg'
+              }`}
+            >
+              {t('nav.recap')}
+            </Link>
+            <Link
+              to="/map"
+              className={`h-7 px-3.5 rounded-full text-[12px] font-medium flex items-center transition-all ${
+                pathname === '/map'
+                  ? 'bg-bg-raised text-fg shadow-[0_1px_2px_rgba(0,0,0,0.08)]'
+                  : 'text-muted hover:text-fg'
+              }`}
+            >
+              {t('nav.atlas')}
             </Link>
           </div>
-
-          {/* 主导航列表 */}
-          <nav aria-label="Primary" className="space-y-1">
-            <div className="px-2 pb-1.5 text-[11px] font-medium text-faint">{t('app.tagline')}</div>
-            {navItems.map((item) => (
-              <Link
-                key={item.to}
-                to={item.to}
-                className={`flex items-center justify-between rounded-lg px-2 py-1.5 text-[13.5px] transition-colors ${
-                  item.active ? 'font-semibold text-fg' : 'font-normal text-muted hover:text-fg'
-                }`}
-              >
-                <span className="inline-flex items-center gap-2">
-                  <span>{item.label}</span>
-                  {item.active && (
-                    <span
-                      aria-hidden="true"
-                      className="h-1.5 w-1.5 rounded-full bg-fg inline-block"
-                    />
-                  )}
-                </span>
-                {item.badge && (
-                  <span className="font-mono text-[11px] text-faint">{item.badge}</span>
-                )}
-              </Link>
-            ))}
-          </nav>
         </div>
-
-        {/* 底部本机状态与多语言胶囊 */}
-        <div className="space-y-3 pt-4 border-t border-line">
-          <div className="text-[11.5px] text-muted leading-relaxed px-1">{t('app.offline')}</div>
-
-          <fieldset
-            aria-label={t('nav.language')}
-            className="inline-flex items-center rounded-full bg-bg-subtle p-0.5 m-0 border-0 w-full justify-between"
-          >
-            {SUPPORTED_LOCALES.map((loc) => {
-              const active = i18n.language === loc.code;
-              return (
-                <button
-                  key={loc.code}
-                  type="button"
-                  onClick={() => setAppLocale(loc.code as SupportedLocale)}
-                  className={`flex-1 h-6 rounded-full text-[11px] font-medium transition-all cursor-pointer ${
-                    active
-                      ? 'bg-bg-raised text-fg shadow-[0_1px_2px_rgba(0,0,0,0.08)]'
-                      : 'text-muted hover:text-fg'
-                  }`}
-                  title={loc.label}
-                >
-                  {loc.short}
-                </button>
-              );
-            })}
-          </fieldset>
-        </div>
-      </aside>
-
-      {/* 移动端顶栏 */}
-      <header className="md:hidden sticky top-0 z-30 flex items-center justify-between px-4 h-13 border-b border-line bg-bg/90 backdrop-blur-md">
-        <Link to="/" className="inline-flex items-center gap-2">
-          <svg
-            width="22"
-            height="22"
-            viewBox="0 0 32 32"
-            fill="none"
-            aria-hidden="true"
-            className="text-fg"
-          >
-            <path
-              d="M2 5C2 3.34315 3.34315 2 5 2H27C28.6569 2 30 3.34315 30 5V12.5C27.5147 12.5 25.5 14.5147 25.5 17C25.5 19.4853 27.5147 21.5 30 21.5V27C30 28.6569 28.6569 30 27 30H5C3.34315 30 2 28.6569 2 27V21.5C4.48528 21.5 6.5 19.4853 6.5 17C6.5 14.5147 4.48528 12.5 2 12.5V5Z"
-              fill="currentColor"
-            />
-          </svg>
-          <span className="text-[15px] font-semibold tracking-[-0.02em]">{t('app.name')}</span>
-        </Link>
-
-        <div className="flex items-center gap-2">
-          <Link to="/t/new/edit" className={btnClass('outline', 'h-7 px-3 text-[12px]')}>
-            + {t('nav.new')}
-          </Link>
-        </div>
-      </header>
+      )}
 
       {/* 主画布区域 */}
       <main id="main-content" className="flex-1 min-w-0 flex flex-col">
         {children ?? <Outlet />}
       </main>
 
-      {/* 移动端底部胶囊导航 */}
+      {/* 底部悬浮磨砂胶囊控制坞（Concept C 1:1 复刻） */}
       <nav
-        aria-label="Mobile Primary"
-        className="md:hidden fixed bottom-0 inset-x-0 z-30 border-t border-line bg-bg-raised/95 backdrop-blur-md"
+        aria-label="Primary Dock"
+        className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 frosted-dock rounded-full px-2.5 py-2 flex items-center gap-2 select-none"
       >
-        <div className="grid grid-cols-5 h-13">
-          {navItems.map((item) => (
-            <Link
-              key={item.to}
-              to={item.to}
-              className={`flex flex-col items-center justify-center gap-1 text-[11.5px] transition-colors ${
-                item.active ? 'text-fg font-semibold' : 'text-muted'
-              }`}
-            >
-              <span>{item.label}</span>
-              <span
-                className={`h-1 w-1 rounded-full ${item.active ? 'bg-fg' : 'bg-transparent'}`}
-              />
-            </Link>
-          ))}
-        </div>
+        {/* 1. 票夹叠卡（Home Rolodex，再次点击可切换总览网格） */}
+        <Link
+          to="/"
+          onClick={() => {
+            if (isHome) {
+              window.dispatchEvent(new CustomEvent('mogiri:toggle-home-view'));
+            }
+          }}
+          aria-label={t('nav.archive')}
+          title={t('nav.archive')}
+          className={`h-10 w-10 rounded-full flex items-center justify-center transition-all ${
+            isHome
+              ? 'bg-black/[0.12] text-fg shadow-[inset_0_1px_2px_rgba(0,0,0,0.12)]'
+              : 'text-muted hover:text-fg hover:bg-black/[0.05]'
+          }`}
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+          </svg>
+        </Link>
+
+        {/* 2. 扫描取景（Scan） */}
+        <Link
+          to="/scan"
+          aria-label={t('nav.scan')}
+          title={t('nav.scan')}
+          className={`h-10 w-10 rounded-full flex items-center justify-center transition-all ${
+            isScan
+              ? 'bg-black/[0.12] text-fg shadow-[inset_0_1px_2px_rgba(0,0,0,0.12)]'
+              : 'text-muted hover:text-fg hover:bg-black/[0.05]'
+          }`}
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M4 8V6a2 2 0 0 1 2-2h2" />
+            <path d="M4 16v2a2 2 0 0 0 2 2h2" />
+            <path d="M16 4h2a2 2 0 0 1 2 2v2" />
+            <path d="M16 20h2a2 2 0 0 0 2-2v-2" />
+            <line x1="9" y1="15" x2="15" y2="9" />
+          </svg>
+        </Link>
+
+        {/* 3. 新建票根（New Stub） */}
+        <Link
+          to="/t/new/edit"
+          aria-label={t('nav.new')}
+          title={t('nav.new')}
+          className={`h-10 w-10 rounded-full flex items-center justify-center transition-all ${
+            isNew
+              ? 'bg-black/[0.12] text-fg shadow-[inset_0_1px_2px_rgba(0,0,0,0.12)]'
+              : 'text-muted hover:text-fg hover:bg-black/[0.05]'
+          }`}
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M6 6v10a2 2 0 0 0 2 2h10" />
+          </svg>
+        </Link>
+
+        {/* 竖向发丝分隔线 */}
+        <span aria-hidden="true" className="h-5 w-px bg-black/14 mx-0.5" />
+
+        {/* 4. 统计与足迹（Recap & Atlas） */}
+        <Link
+          to="/recap/$year"
+          params={{ year: '2026' }}
+          aria-label={t('nav.recap')}
+          title={`${t('nav.recap')} / ${t('nav.atlas')}`}
+          className={`h-10 w-10 rounded-full flex items-center justify-center transition-all ${
+            isRecapOrMap
+              ? 'bg-black/[0.12] text-fg shadow-[inset_0_1px_2px_rgba(0,0,0,0.12)]'
+              : 'text-muted hover:text-fg hover:bg-black/[0.05]'
+          }`}
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <line x1="4" y1="8" x2="20" y2="8" />
+            <line x1="4" y1="16" x2="20" y2="16" />
+            <circle cx="9" cy="8" r="2" fill="var(--bg-raised)" />
+            <circle cx="15" cy="16" r="2" fill="var(--bg-raised)" />
+          </svg>
+        </Link>
+
+        {/* 5. 偏好与信息（Settings） */}
+        <Link
+          to="/settings"
+          aria-label={t('nav.settings')}
+          title={t('nav.settings')}
+          className={`h-10 w-10 rounded-full flex items-center justify-center transition-all ${
+            isSettings
+              ? 'bg-black/[0.12] text-fg shadow-[inset_0_1px_2px_rgba(0,0,0,0.12)]'
+              : 'text-muted hover:text-fg hover:bg-black/[0.05]'
+          }`}
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="12" r="9" />
+            <line x1="12" y1="16" x2="12" y2="12" />
+            <line x1="12" y1="8" x2="12.01" y2="8" />
+          </svg>
+        </Link>
       </nav>
 
       {/* 全局唯一 WebGL Canvas 宿主 */}
