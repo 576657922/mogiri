@@ -165,10 +165,118 @@ const TICKET_CLIP_PATH = buildTicketClipPath(false);
 const TICKET_BACK_CLIP_PATH = buildTicketClipPath(true);
 
 /**
- * 计算每一层 depth (0..6) 的透视递减纵向像素位移与缩放比例（纯数值，供弹簧物理引擎直接插值）
+ * 线性插值两个十六进制颜色（#rrggbb）
  */
-function computeLayerPosePx(depth: number, dragProgress = 0): { yPx: number; scale: number } {
-  const effectiveDepth = Math.max(0, depth - dragProgress);
+function lerpHexColor(hexA: string, hexB: string, t: number): string {
+  const clamped = Math.max(0, Math.min(1, t));
+  const a = Number.parseInt(hexA.slice(1), 16);
+  const b = Number.parseInt(hexB.slice(1), 16);
+  const rA = (a >> 16) & 255;
+  const gA = (a >> 8) & 255;
+  const bA = a & 255;
+  const rB = (b >> 16) & 255;
+  const gB = (b >> 8) & 255;
+  const bB = b & 255;
+  const r = Math.round(rA + (rB - rA) * clamped);
+  const g = Math.round(gA + (gB - gA) * clamped);
+  const bl = Math.round(bA + (bB - bA) * clamped);
+  return `#${((1 << 24) | (r << 16) | (g << 8) | bl).toString(16).slice(1)}`;
+}
+
+/**
+ * 根据卡片固定槽位 slotKey 与连续景深 relDepth 计算当前卡纸的边框色、内衬色、油墨色与色框厚度：
+ * - 每张卡片在后方叠卡区（relDepth >= 0.45）始终保有自身专属的博朗工业原色，向前递进时色彩随实体卡片一同前移，绝不发生互补色混浊
+ * - 当卡片贴近前排落位区（0 < relDepth < 0.45）时，其彩色模切包边与中性象牙白（#f1f1ec）平滑融合，落位（relDepth <= 0）即成为无框纯象牙白活版主卡
+ */
+function computeContinuousTheme(
+  slotKey: number,
+  relDepth: number,
+): {
+  rim: string;
+  body: string;
+  ink: string;
+  rimInsetX: number;
+  rimInsetY: number;
+  headerY: number;
+  priceY: number;
+  lowerSheetOpacity: number;
+} {
+  const frontTheme = STACK_DEPTH_THEMES[0];
+  if (relDepth <= 0.001) {
+    return {
+      rim: frontTheme.rim,
+      body: frontTheme.body,
+      ink: frontTheme.ink,
+      rimInsetX: 0,
+      rimInsetY: 0,
+      headerY: 38,
+      priceY: 35,
+      lowerSheetOpacity: 0,
+    };
+  }
+
+  // 后方 6 种博朗工业色循环分配给每个固定卡槽（slotKey = 1..6 对应 STACK_DEPTH_THEMES[1..6]）
+  const backPaletteCount = STACK_DEPTH_THEMES.length - 1;
+  const paletteIdx =
+    ((((slotKey - 1) % backPaletteCount) + backPaletteCount) % backPaletteCount) + 1;
+  const cardTheme = STACK_DEPTH_THEMES[paletteIdx] ?? STACK_DEPTH_THEMES[1];
+
+  if (relDepth < 1) {
+    // 1.0 -> 0.38 保持自身鲜明工业色顶栏；0.38 -> 0.0 与纯象牙白平滑过渡至无框主卡
+    const colorT = Math.max(0, Math.min(1, relDepth / 0.38));
+    const smoothColorT = colorT * colorT * (3 - 2 * colorT);
+    const geomT = Math.max(0, Math.min(1, relDepth));
+    return {
+      rim: lerpHexColor(frontTheme.rim, cardTheme.rim, smoothColorT),
+      body: lerpHexColor(frontTheme.body, cardTheme.body, smoothColorT),
+      ink: lerpHexColor(frontTheme.ink, cardTheme.ink, smoothColorT),
+      rimInsetX: 6.5 * smoothColorT,
+      rimInsetY: 5.5 * smoothColorT,
+      headerY: 38 - 6.5 * geomT,
+      priceY: 35 - 4.5 * geomT,
+      lowerSheetOpacity: smoothColorT,
+    };
+  }
+
+  const lowerSheetOpacity =
+    relDepth <= 1.15 ? 1 : Math.max(0, Math.min(1, 1 - (relDepth - 1.15) / 0.55));
+
+  return {
+    rim: cardTheme.rim,
+    body: cardTheme.body,
+    ink: cardTheme.ink,
+    rimInsetX: 6.5,
+    rimInsetY: 5.5,
+    headerY: 31.5,
+    priceY: 30.5,
+    lowerSheetOpacity,
+  };
+}
+
+/**
+ * 计算任意连续景深 relDepth (-1..6) 的三维光学投影姿态：
+ * - relDepth >= 0：沿透视递减阶梯排布
+ * - relDepth < 0：前排票根保持 100% 实体不透明卡纸质感沿垂直中轴滑落，清晰显露后卡标题，仅在末段净空区柔和消隐
+ */
+function computeCardStagePose(relDepth: number): {
+  yPx: number;
+  scale: number;
+  opacity: number;
+  blurPx: number;
+} {
+  if (relDepth < 0) {
+    const p = Math.max(0, Math.min(1, -relDepth));
+    // 对称垂直滑落轨迹：p=0.43 时下滑约 84px，恰好完整露出后方下一张票根的顶栏与主标题
+    const yPx = (1 - (1 - p) ** 1.85) * 142;
+    // 抽离瞬间微幅浮起（+1.6%），呈现厚卡纸脱离卡槽的实体层次感
+    const scale = 1 + Math.sin(p * Math.PI) * 0.016 - p * 0.01;
+    // 前 62% 行程保持 100% 不透明实体卡纸（绝不产生半透明叠字重影），末段 38% 平滑消融
+    const opacity = p <= 0.62 ? 1 : 0.5 * (1 + Math.cos(Math.PI * Math.min(1, (p - 0.62) / 0.38)));
+    const blurPx = p <= 0.68 ? 0 : ((p - 0.68) / 0.32) ** 1.3 * 3.2;
+    return { yPx, scale, opacity, blurPx };
+  }
+
+  const effectiveDepth = Math.max(0, relDepth);
   const scale = 1 - effectiveDepth * 0.042;
   const whole = Math.floor(effectiveDepth);
   const frac = effectiveDepth - whole;
@@ -179,35 +287,30 @@ function computeLayerPosePx(depth: number, dragProgress = 0): { yPx: number; sca
   if (frac > 0) {
     stepSumPx += frac * 23.2 * (1 - (whole + 1) * 0.042);
   }
-  return { yPx: -stepSumPx, scale };
+  const farFade = effectiveDepth > 6 ? Math.max(0, 1 - (effectiveDepth - 6)) : 1;
+  return { yPx: -stepSumPx, scale, opacity: farFade, blurPx: 0 };
 }
 
 /**
  * 模切活版印刷实体票根组件（Concept C 核心视觉载体）
- * 每张卡片拥有独立色彩基因（paletteIndex），在向前翻动时整张卡片连同色彩与完整版面真实前移
+ * 由连续景深 relDepth 实时驱动色彩蜕变与版面显露
  */
 function DieCutTicketCard({
   ticket,
-  depth,
-  paletteIndex,
+  relDepth,
   slotKey,
   catalogNo,
   language,
   typeLabel,
 }: {
   ticket: TicketRecord;
-  depth: number;
-  paletteIndex: number;
+  relDepth: number;
   slotKey: number;
   catalogNo: string;
   language: string;
   typeLabel: string;
 }) {
-  const theme =
-    STACK_DEPTH_THEMES[
-      ((paletteIndex % STACK_DEPTH_THEMES.length) + STACK_DEPTH_THEMES.length) %
-        STACK_DEPTH_THEMES.length
-    ] ?? STACK_DEPTH_THEMES[0];
+  const theme = computeContinuousTheme(slotKey, relDepth);
   const barcode = useMemo(() => buildBarcodeSpec(ticket.id), [ticket.id]);
 
   const priceDisplay =
@@ -220,40 +323,51 @@ function DieCutTicketCard({
       : 'ADMIT ONE';
 
   const uid = `tk-slot-${slotKey}`;
-  // depth <= 0 包含当前前排主卡（0）以及正在向下抽离移开的上一张主卡（-1）
-  const isFront = depth <= 0;
-  const headerInk = isFront ? '#141413' : theme.ink;
+  const isFrontShape = relDepth < 0.45;
+  const showFullTypography = relDepth < 1.85;
+  const typographyOpacity =
+    relDepth <= 1.0 ? 1 : Math.max(0, Math.min(1, 1 - (relDepth - 1.0) / 0.75));
+  const lowerSheetOpacity = theme.lowerSheetOpacity;
 
   return (
     <svg
       viewBox="0 0 540 268"
       className="w-full h-auto block select-none overflow-visible"
-      aria-label={isFront ? ticket.title : undefined}
+      aria-label={isFrontShape ? ticket.title : undefined}
     >
       <title>{ticket.title}</title>
       <defs>
         <clipPath id={uid}>
-          <path d={isFront ? TICKET_CLIP_PATH : TICKET_BACK_CLIP_PATH} />
+          <path d={isFrontShape ? TICKET_CLIP_PATH : TICKET_BACK_CLIP_PATH} />
         </clipPath>
       </defs>
 
       <g clipPath={`url(#${uid})`}>
-        {/* 外层色框（每张票根保留自身专属工业色框，向前翻动时色框随之递进） */}
+        {/* 外层工业色框（随 relDepth 连续插值，抵达前排时平滑融化为象牙白） */}
         <rect x="0" y="0" width="540" height="268" fill={theme.rim} />
 
-        {/* 内层卡纸（前排主卡恢复象牙白票面并保留纤细彩色模切包边，后方叠卡展示工业卡纸色） */}
+        {/* 内层卡纸 */}
         <rect
-          x={paletteIndex === 0 && isFront ? '0' : isFront ? '4.5' : '6.5'}
-          y={paletteIndex === 0 && isFront ? '0' : isFront ? '4.5' : '5.5'}
-          width={paletteIndex === 0 && isFront ? '540' : isFront ? '531' : '527'}
-          height={paletteIndex === 0 && isFront ? '268' : isFront ? '259' : '257'}
+          x={theme.rimInsetX}
+          y={theme.rimInsetY}
+          width={540 - theme.rimInsetX * 2}
+          height={268 - theme.rimInsetY * 2}
           rx="1.5"
-          fill={isFront ? '#f1f1ec' : theme.body}
-          style={{ transition: 'fill 280ms cubic-bezier(0.22, 1, 0.36, 1)' }}
+          fill={theme.body}
         />
 
-        {/* 紧邻主卡的后方第 1 张票根下半部预先铺好象牙白内衬，当前卡下滑移开时直接露出下方完整印刷票面 */}
-        {depth === 1 && <rect x="6.5" y="48" width="527" height="214.5" rx="1" fill="#f1f1ec" />}
+        {/* 紧邻主卡的后方叠卡下半部铺设象牙白活版纸面，当前卡滑落时直接显露下方完整票面 */}
+        {lowerSheetOpacity > 0.01 && (
+          <rect
+            x={theme.rimInsetX}
+            y="46"
+            width={540 - theme.rimInsetX * 2}
+            height={268 - 46 - theme.rimInsetY}
+            rx="1"
+            fill="#f1f1ec"
+            opacity={lowerSheetOpacity}
+          />
+        )}
 
         {/* 顶部微高光 */}
         <line
@@ -271,43 +385,41 @@ function DieCutTicketCard({
           y1="14"
           x2="412"
           y2="254"
-          stroke={isFront ? 'rgba(20,20,19,0.42)' : 'rgba(20,20,19,0.32)'}
+          stroke={isFrontShape ? 'rgba(20,20,19,0.42)' : 'rgba(20,20,19,0.32)'}
           strokeWidth="2.4"
           strokeLinecap="round"
           strokeDasharray="1.5 6.5"
         />
 
-        {/* 票头左侧品牌名与右侧票价（后方叠卡在顶部露出一半文字，1:1 复刻 Concept C） */}
+        {/* 票头左侧品牌名与右侧票价（后方叠卡在顶部露出一半文字，推进至前排时平滑落位） */}
         <text
           x="30"
-          y={isFront ? 38 : 31.5}
-          fill={headerInk}
+          y={theme.headerY}
+          fill={theme.ink}
           fontSize="21"
           fontWeight="700"
           letterSpacing="-0.03em"
           fontFamily="Inter Variable, PingFang SC, Hiragino Sans, sans-serif"
-          style={{ transition: 'fill 260ms ease' }}
         >
           Hanken 半券
         </text>
 
         <text
           x="388"
-          y={isFront ? 35 : 30.5}
+          y={theme.priceY}
           textAnchor="end"
-          fill={headerInk}
+          fill={theme.ink}
           fontSize="12.5"
           fontWeight="500"
           fontFamily="JetBrains Mono Variable, monospace"
           opacity="0.88"
-          style={{ transition: 'fill 260ms ease' }}
         >
           {priceDisplay}
         </text>
 
-        {/* 完整活版印刷票面（前排与紧邻下一张始终渲染，移开前卡时真实露出下层票面） */}
-        {depth <= 2 && (
-          <g opacity={isFront ? 1 : depth === 1 ? 0.96 : 0}>
+        {/* 完整活版印刷票面 */}
+        {showFullTypography && (
+          <g opacity={typographyOpacity}>
             {/* 票种小标 */}
             <text
               x="30"
@@ -473,16 +585,81 @@ export function TimelineView() {
 
   const [typeFilter, setTypeFilter] = useState<TicketType | 'all'>('all');
   const [query, setQuery] = useState('');
-  // 连续无限游标 cursor：每次翻票递增/递减，保证每张叠卡拥有稳定的虚拟槽位 key，触发真实位移与抽离动画
-  const [cursor, setCursor] = useState(0);
-  const [direction, setDirection] = useState<1 | -1>(1);
-  const [wheelTicks, setWheelTicks] = useState(0);
-  const [dragY, setDragY] = useState(0);
-  const [isDragging, setIsDragging] = useState(false);
+  // 连续浮点物理游标 animatedCursor：由临界阻尼弹簧引擎（或拖拽手势）驱动，联动 7 层叠卡、毫米刻度尺与金属滚花转轮
+  const [animatedCursor, setAnimatedCursor] = useState(0);
   const [showFilterBar, setShowFilterBar] = useState(false);
 
-  const dragStartRef = useRef<{ y: number; t: number; moved: boolean } | null>(null);
+  const posRef = useRef(0);
+  const velRef = useRef(0);
+  const targetRef = useRef(0);
+  const rafRef = useRef<number | null>(null);
+  const lastFrameTimeRef = useRef<number>(0);
+
+  const dragStartRef = useRef<{
+    y: number;
+    t: number;
+    startCursor: number;
+    lastY: number;
+    lastT: number;
+    velPxPerMs: number;
+    moved: boolean;
+  } | null>(null);
   const wheelLockRef = useRef<number>(0);
+
+  const startSpringLoop = useCallback(() => {
+    if (rafRef.current !== null) return;
+    lastFrameTimeRef.current = performance.now();
+
+    const tick = (now: number) => {
+      const dt = Math.min(0.032, Math.max(0.004, (now - lastFrameTimeRef.current) / 1000));
+      lastFrameTimeRef.current = now;
+
+      // 临界阻尼弹簧参数（stiffness=152, damping=24.2，无多余震荡回弹，如徕卡对焦环般顺滑落位）
+      const stiffness = 152;
+      const damping = 24.2;
+      const displacement = posRef.current - targetRef.current;
+      const accel = -stiffness * displacement - damping * velRef.current;
+
+      velRef.current += accel * dt;
+      posRef.current += velRef.current * dt;
+
+      if (
+        Math.abs(targetRef.current - posRef.current) < 0.0008 &&
+        Math.abs(velRef.current) < 0.002
+      ) {
+        posRef.current = targetRef.current;
+        velRef.current = 0;
+        setAnimatedCursor(posRef.current);
+        rafRef.current = null;
+        return;
+      }
+
+      setAnimatedCursor(posRef.current);
+      rafRef.current = requestAnimationFrame(tick);
+    };
+
+    rafRef.current = requestAnimationFrame(tick);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, []);
+
+  const resetCursor = useCallback(() => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    posRef.current = 0;
+    velRef.current = 0;
+    targetRef.current = 0;
+    setAnimatedCursor(0);
+  }, []);
 
   const allActive = useLiveQuery(
     () => db.tickets.where('status').equals('active').toArray(),
@@ -508,18 +685,17 @@ export function TimelineView() {
   );
 
   const total = filtered.length;
-  const safeIndex = total === 0 ? 0 : ((cursor % total) + total) % total;
+  const nearestCursor = Math.round(animatedCursor);
+  const safeIndex = total === 0 ? 0 : ((nearestCursor % total) + total) % total;
   const activeTicket = filtered[safeIndex] ?? null;
 
   const stepBy = useCallback(
     (delta: number) => {
       if (total <= 1 || delta === 0) return;
-      const stepDir: 1 | -1 = delta > 0 ? 1 : -1;
-      setDirection(stepDir);
-      setCursor((prev) => prev + delta);
-      setWheelTicks((prev) => prev + delta);
+      targetRef.current = Math.round(targetRef.current) + delta;
+      startSpringLoop();
     },
-    [total],
+    [total, startSpringLoop],
   );
 
   // 响应底部 Dock 再次点击首页图标切换 3D 叠卡 / 总览网格
@@ -557,67 +733,98 @@ export function TimelineView() {
   const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
     if (total <= 1) return;
     const now = performance.now();
-    if (now - wheelLockRef.current < 190) return;
+    if (now - wheelLockRef.current < 210) return;
     const primary = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
-    if (Math.abs(primary) < 12) return;
+    if (Math.abs(primary) < 10) return;
     wheelLockRef.current = now;
     stepBy(primary > 0 ? 1 : -1);
   };
 
-  // 上下拖拽手势（同时支持在叠卡与右侧金属滚轮上拖拽）
+  // 上下拖拽手势（1:1 实时跟手驱动 animatedCursor，松手后将动量无缝移交弹簧引擎归位）
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (total <= 1) return;
-    dragStartRef.current = { y: e.clientY, t: performance.now(), moved: false };
-    setIsDragging(true);
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    const now = performance.now();
+    dragStartRef.current = {
+      y: e.clientY,
+      t: now,
+      startCursor: posRef.current,
+      lastY: e.clientY,
+      lastT: now,
+      velPxPerMs: 0,
+      moved: false,
+    };
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const start = dragStartRef.current;
     if (!start) return;
+    const now = performance.now();
     const dy = e.clientY - start.y;
     if (Math.abs(dy) > 5) start.moved = true;
-    setDragY(dy);
+
+    const dt = Math.max(4, now - start.lastT);
+    start.velPxPerMs = (e.clientY - start.lastY) / dt;
+    start.lastY = e.clientY;
+    start.lastT = now;
+
+    // 向下拖动 150px 对应完整抽离 1 张票根
+    const nextPos = start.startCursor + dy / 150;
+    posRef.current = nextPos;
+    targetRef.current = nextPos;
+    velRef.current = 0;
+    setAnimatedCursor(nextPos);
   };
 
   const handlePointerEnd = () => {
     const start = dragStartRef.current;
     if (!start) return;
-    const dt = Math.max(16, performance.now() - start.t);
-    const velocity = dragY / dt;
-    if (dragY > 38 || velocity > 0.28) {
-      stepBy(1);
-    } else if (dragY < -38 || velocity < -0.28) {
-      stepBy(-1);
-    }
     dragStartRef.current = null;
-    setDragY(0);
-    setIsDragging(false);
+
+    if (!start.moved) {
+      targetRef.current = Math.round(posRef.current);
+      startSpringLoop();
+      return;
+    }
+
+    const cursorVel = (start.velPxPerMs * 1000) / 150;
+    velRef.current = cursorVel;
+    const projected = posRef.current + cursorVel * 0.14;
+    const baseRound = Math.round(start.startCursor);
+    const diff = projected - baseRound;
+
+    if (diff > 0.22) {
+      targetRef.current = baseRound + Math.max(1, Math.round(diff));
+    } else if (diff < -0.22) {
+      targetRef.current = baseRound + Math.min(-1, Math.round(diff));
+    } else {
+      targetRef.current = baseRound;
+    }
+    startSpringLoop();
   };
 
-  // 生成纵向叠卡序列（d = 6..-1：d = 0..6 为在架叠卡，d = -1 为刚被抽离移开的前排卡片，全程保持挂载以驱动物理抽离与回退动画）
+  // 生成围绕当前浮点游标 animatedCursor 的连续虚拟槽位序列（relDepth 覆盖 -1..6）
+  const baseFloor = Math.floor(animatedCursor);
   const visibleStack = useMemo(() => {
     if (total === 0) return [];
-    const maxLayers = 7;
     const layers: {
-      depth: number;
       slotKey: number;
-      paletteIndex: number;
       ticket: TicketRecord;
       itemIndex: number;
     }[] = [];
-    for (let d = maxLayers - 1; d >= -1; d--) {
-      const slotKey = cursor + d;
+    for (let offset = 7; offset >= -1; offset--) {
+      const slotKey = baseFloor + offset;
       const idx = ((slotKey % total) + total) % total;
-      const paletteIndex =
-        ((slotKey % STACK_DEPTH_THEMES.length) + STACK_DEPTH_THEMES.length) %
-        STACK_DEPTH_THEMES.length;
       const tk = filtered[idx];
       if (tk) {
-        layers.push({ depth: d, slotKey, paletteIndex, ticket: tk, itemIndex: idx });
+        layers.push({ slotKey, ticket: tk, itemIndex: idx });
       }
     }
     return layers;
-  }, [filtered, cursor, total]);
+  }, [filtered, baseFloor, total]);
 
   // 右侧刻度尺的 4 个月份标签（自上而下 AUG · SEP · OCT · NOV，红线居中介于 SEP 与 OCT 之间）
   const dialMonths = useMemo(() => {
@@ -634,6 +841,9 @@ export function TimelineView() {
     ];
   }, [activeTicket]);
 
+  // 滚轮与月份刻度盘的连续微位移相位
+  const cursorFrac = animatedCursor - nearestCursor;
+  const rulerPhasePx = (((animatedCursor * 16) % 16) + 16) % 16;
   const hasActiveFilters = typeFilter !== 'all' || query.trim() !== '';
 
   return (
@@ -655,7 +865,7 @@ export function TimelineView() {
               type="button"
               onClick={() => {
                 setTypeFilter('all');
-                setCursor(0);
+                resetCursor();
               }}
               className={`h-7 rounded-full px-3 text-[12px] font-medium transition-colors cursor-pointer ${
                 typeFilter === 'all' ? 'bg-fg text-bg-raised' : 'text-muted hover:text-fg'
@@ -669,7 +879,7 @@ export function TimelineView() {
                 type="button"
                 onClick={() => {
                   setTypeFilter(tp);
-                  setCursor(0);
+                  resetCursor();
                 }}
                 className={`h-7 rounded-full px-3 text-[12px] font-medium transition-colors cursor-pointer ${
                   typeFilter === tp ? 'bg-fg text-bg-raised' : 'text-muted hover:text-fg'
@@ -683,7 +893,7 @@ export function TimelineView() {
               value={query}
               onChange={(e) => {
                 setQuery(e.target.value);
-                setCursor(0);
+                resetCursor();
               }}
               placeholder={t('home.searchPlaceholder')}
               aria-label={t('home.searchPlaceholder')}
@@ -718,7 +928,7 @@ export function TimelineView() {
                 onClick={() => {
                   setTypeFilter('all');
                   setQuery('');
-                  setCursor(0);
+                  resetCursor();
                 }}
                 className={btnClass('outline')}
               >
@@ -732,7 +942,7 @@ export function TimelineView() {
           </div>
         </div>
       ) : timelineView === 'stack' ? (
-        /* Concept C 主舞台：中央 3D 纵向景深叠卡 + 右侧博朗机械滚轮刻度尺 */
+        /* Concept C 主舞台：中央 3D 纵向景深叠卡 + 右侧博朗机械滚轮刻度尺（底部保持纯粹负空间） */
         <div
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
@@ -741,120 +951,77 @@ export function TimelineView() {
           className="flex-1 flex flex-col items-center justify-center py-4 touch-none"
         >
           <div className="relative z-30 flex items-center justify-center w-full max-w-[940px]">
-            {/* 中央纵向景深卡槽（纯 2D 层叠合成以确保 z-index 严格受控，前卡移开时始终覆盖于下层票面之上） */}
+            {/* 中央纵向景深卡槽（由连续浮点游标 animatedCursor 直接同步驱动每一层的位移、缩放、色彩蜕变与景深柔焦） */}
             <div className="relative w-full max-w-[540px] h-[350px] sm:h-[420px] flex items-end justify-center pb-2">
-              {visibleStack.map(({ depth, slotKey, paletteIndex, ticket, itemIndex }) => {
-                const isFront = depth === 0;
-                const isPeeled = depth === -1;
+              {visibleStack.map(({ slotKey, ticket, itemIndex }) => {
+                const relDepth = slotKey - animatedCursor;
+                if (relDepth <= -0.995 || relDepth >= 6.95) return null;
+
+                const isFrontActive = Math.abs(relDepth) < 0.45;
+                const isPeeling = relDepth < -0.005;
                 const catalogNo = String(total - itemIndex).padStart(3, '0');
-                const dragProgress = isDragging ? Math.max(-0.85, Math.min(0.95, dragY / 145)) : 0;
-                const { yPx, scale } = computeLayerPosePx(
-                  Math.max(0, depth),
-                  Math.max(0, dragProgress),
-                );
-                const farPose = computeLayerPosePx(7, 0);
-
-                // 直接使用纯 2D 数值对象传给 animate，前排卡片抽离时先保持实体不透明沿左下弧线滑开露出下层票面，末端再渐隐
-                const targetPose = isPeeled
-                  ? {
-                      y: 225,
-                      x: -105,
-                      scale: 0.98,
-                      rotate: -8,
-                      opacity: 0,
-                    }
-                  : isFront && isDragging
-                    ? {
-                        y: dragY,
-                        x: dragY * -0.28,
-                        scale: 1 - Math.max(0, dragY) * 0.0001,
-                        rotate: dragY * -0.04,
-                        opacity: 1,
-                      }
-                    : {
-                        y: yPx,
-                        x: 0,
-                        scale,
-                        rotate: 0,
-                        opacity: 1,
-                      };
-
-                const initialPose =
-                  cursor === 0
-                    ? targetPose
-                    : isPeeled
-                      ? {
-                          y: 225,
-                          x: -105,
-                          scale: 0.98,
-                          rotate: -8,
-                          opacity: 0,
-                        }
-                      : {
-                          y: farPose.yPx,
-                          x: 0,
-                          scale: farPose.scale,
-                          rotate: 0,
-                          opacity: 0,
-                        };
+                const { yPx, scale, opacity, blurPx } = computeCardStagePose(relDepth);
+                const zOrder = Math.round((7 - relDepth) * 10);
 
                 return (
-                  <motion.div
+                  // biome-ignore lint/a11y/noStaticElementInteractions: 全局键盘上下/左右方向键已绑定翻票，此处为卡片表面点击与拖拽手势容器
+                  // biome-ignore lint/a11y/useKeyWithClickEvents: 全局键盘上下/左右方向键已绑定翻票
+                  <div
                     key={`slot-${slotKey}`}
-                    data-ticket-id={isFront ? ticket.id : undefined}
-                    data-slot-depth={depth}
-                    initial={initialPose}
-                    animate={targetPose}
-                    transition={
-                      isDragging
-                        ? { duration: 0 }
-                        : isPeeled
-                          ? {
-                              y: { type: 'spring', stiffness: 135, damping: 20, mass: 0.95 },
-                              x: { type: 'spring', stiffness: 135, damping: 20, mass: 0.95 },
-                              rotate: { type: 'spring', stiffness: 135, damping: 20, mass: 0.95 },
-                              scale: { duration: 0.45 },
-                              opacity: { duration: 0.28, delay: 0.22, ease: 'easeIn' },
-                            }
-                          : {
-                              type: 'spring',
-                              stiffness: 175,
-                              damping: 22,
-                              mass: 0.92,
-                              opacity: { duration: 0.18, ease: 'easeOut' },
-                            }
-                    }
+                    data-ticket-id={isFrontActive ? ticket.id : undefined}
+                    data-slot-depth={Math.round(relDepth)}
                     style={{
-                      zIndex: isPeeled ? 38 : 25 - depth,
+                      zIndex: zOrder,
                       transformOrigin: '50% 0%',
-                      pointerEvents: isPeeled ? 'none' : 'auto',
+                      transform: `translate3d(0px, ${yPx.toFixed(2)}px, 0px) scale(${scale.toFixed(4)})`,
+                      opacity: Number(opacity.toFixed(4)),
+                      filter: isPeeling
+                        ? `drop-shadow(0 -3px 7px rgba(18, 17, 15, 0.11)) drop-shadow(0 24px 30px rgba(18, 17, 15, 0.16))${
+                            blurPx > 0.08 ? ` blur(${blurPx.toFixed(2)}px)` : ''
+                          }`
+                        : undefined,
+                      pointerEvents: isPeeling ? 'none' : 'auto',
+                      willChange: 'transform, opacity, filter',
                     }}
                     onClick={() => {
-                      if (dragStartRef.current?.moved || isPeeled) return;
-                      // 点击任意票根（包括前排主卡或后方叠卡）均触发向下一张抽离移开动画
-                      stepBy(isFront ? 1 : depth);
+                      if (dragStartRef.current?.moved || isPeeling) return;
+                      const roundedDepth = Math.round(relDepth);
+                      stepBy(roundedDepth <= 0 ? 1 : roundedDepth);
                     }}
                     className={`absolute bottom-2 w-full cursor-pointer ${
-                      isFront || isPeeled
-                        ? 'rolodex-shadow'
-                        : 'drop-shadow-[0_-2px_5px_rgba(0,0,0,0.10)] hover:brightness-[1.02]'
+                      isPeeling
+                        ? ''
+                        : relDepth <= 0.35
+                          ? 'rolodex-shadow'
+                          : 'drop-shadow-[0_-2px_5px_rgba(0,0,0,0.10)] hover:brightness-[1.015]'
                     }`}
                   >
                     <DieCutTicketCard
                       ticket={ticket}
-                      depth={depth}
-                      paletteIndex={paletteIndex}
+                      relDepth={relDepth}
                       slotKey={slotKey}
                       catalogNo={catalogNo}
                       language={i18n.language}
                       typeLabel={t(`types.${ticket.type}`)}
                     />
-                  </motion.div>
+
+                    {/* 前排主卡右下角档案号检视入口：点击进入 3D 实体检视舞台，不遮挡整卡翻页手势 */}
+                    {isFrontActive && (
+                      <Link
+                        to="/t/$id"
+                        params={{ id: ticket.id }}
+                        onClick={(e) => e.stopPropagation()}
+                        aria-label={`${t('home.openStub')} ${ticket.title}`}
+                        title={t('home.openStub')}
+                        className="absolute right-[26%] bottom-[5%] w-[19%] h-[14%] rounded-md hover:bg-black/[0.04] transition-colors"
+                      />
+                    )}
+                  </div>
                 );
               })}
             </div>
 
-            {/* 右侧：博朗机械滚花转轮 + 蚀刻毫米尺 + 纵向月份刻度 + 朱红指针线（Concept C 1:1 复刻） */}
+            {/* 右侧：博朗机械滚花转轮 + 蚀刻毫米尺 + 纵向月份刻度 + 朱红指针线（与 animatedCursor 1:1 机械啮合） */}
             <div
               onPointerDown={handlePointerDown}
               onPointerMove={handlePointerMove}
@@ -870,18 +1037,20 @@ export function TimelineView() {
                 className="block overflow-visible"
                 aria-hidden="true"
               >
-                {/* 65 条精密水平毫米刻度线（上下两端渐隐） */}
+                {/* 65 条精密水平毫米刻度线（随滚轮连续传动，上下两端光学渐隐） */}
                 {Array.from({ length: 65 }).map((_, idx) => {
-                  const y = 10 + idx * 4;
+                  const baseTickY = 10 + idx * 4;
+                  const shiftedY = 10 + ((((baseTickY - 10 + rulerPhasePx) % 256) + 256) % 256);
                   const isMajor = idx % 4 === 0;
-                  const edgeFade = Math.min(1, Math.min(idx + 1, 65 - idx) / 7);
+                  const distFromEdge = Math.min(shiftedY - 10, 266 - shiftedY);
+                  const edgeFade = Math.max(0, Math.min(1, distFromEdge / 28));
                   return (
                     <line
-                      key={`ruler-tick-${y}`}
+                      key={`ruler-tick-${baseTickY}`}
                       x1={isMajor ? 11 : 16}
-                      y1={y}
+                      y1={shiftedY}
                       x2={22}
-                      y2={y}
+                      y2={shiftedY}
                       stroke="#191918"
                       strokeWidth={isMajor ? '1.1' : '0.85'}
                       strokeOpacity={(isMajor ? 0.38 : 0.22) * edgeFade}
@@ -889,13 +1058,8 @@ export function TimelineView() {
                   );
                 })}
 
-                {/* 纵向旋转月份标签（AUG · SEP · OCT · NOV，翻票时随滚轮弹性位移） */}
-                <motion.g
-                  key={`dial-wheel-${cursor}`}
-                  initial={{ y: direction > 0 ? 18 : -18, opacity: 0.45 }}
-                  animate={{ y: 0, opacity: 1 }}
-                  transition={{ type: 'spring', stiffness: 320, damping: 26 }}
-                >
+                {/* 纵向旋转月份标签（AUG · SEP · OCT · NOV，随弹簧相位连续滚动） */}
+                <g transform={`translate(0, ${(-cursorFrac * 38).toFixed(2)})`}>
                   {dialMonths.map((m) => (
                     // biome-ignore lint/a11y/noStaticElementInteractions: 刻度盘鼠标辅助点击跳转（键盘已由全局方向键监听处理）
                     <g
@@ -928,56 +1092,23 @@ export function TimelineView() {
                   <circle cx="38" cy="75" r="1.4" fill="#191918" fillOpacity="0.35" />
                   <circle cx="38" cy="138" r="1.5" fill="#191918" fillOpacity="0.85" />
                   <circle cx="38" cy="201" r="1.4" fill="#191918" fillOpacity="0.35" />
-                </motion.g>
+                </g>
 
                 {/* 贯穿刻度尺与中心点的朱红机械指针线（精准指向金属滚轮正中央 y=138） */}
                 <line x1="0" y1="138" x2="62" y2="138" stroke="#d64c35" strokeWidth="1.5" />
               </svg>
 
-              {/* 机械滚轮凹槽与金属滚花转轮（与 y=138 垂直居中对齐） */}
+              {/* 机械滚轮凹槽与金属滚花转轮（与 y=138 垂直居中对齐，60fps 实时啮合滚动） */}
               <div className="w-[13px] h-[168px] rounded-full wheel-trough flex items-center justify-center relative -ml-[1px]">
                 <div
                   style={{
-                    backgroundPositionY: `${wheelTicks * 7 + (isDragging ? dragY * 0.4 : 0)}px, 0px`,
+                    backgroundPositionY: `${(animatedCursor * 28).toFixed(2)}px, 0px`,
                   }}
-                  className="w-[10.5px] h-[94px] rounded-[4px] knurled-wheel transition-[background-position] duration-150"
+                  className="w-[10.5px] h-[94px] rounded-[4px] knurled-wheel"
                 />
               </div>
             </div>
           </div>
-
-          {/* 票叠下方轻量微控胶囊：支持点击上一张/下一张连续移开票根，或直接进入 3D 实体检视舞台 */}
-          {activeTicket && (
-            <div className="mt-5 flex items-center gap-2 z-10">
-              <button
-                type="button"
-                onClick={() => stepBy(-1)}
-                aria-label={t('home.prevStub')}
-                className="h-7 w-7 rounded-full bg-black/[0.045] hover:bg-black/[0.09] text-muted hover:text-fg flex items-center justify-center text-[12px] transition-colors cursor-pointer"
-              >
-                ↑
-              </button>
-              <Link
-                to="/t/$id"
-                params={{ id: activeTicket.id }}
-                className="h-7 rounded-full bg-black/[0.045] hover:bg-black/[0.09] px-3.5 text-[11.5px] font-mono text-muted hover:text-fg flex items-center gap-2 transition-colors"
-              >
-                <span>
-                  {String(safeIndex + 1).padStart(2, '0')} / {String(total).padStart(2, '0')}
-                </span>
-                <span className="text-black/25">·</span>
-                <span className="font-sans font-medium">{t('home.openStub')} ↗</span>
-              </Link>
-              <button
-                type="button"
-                onClick={() => stepBy(1)}
-                aria-label={t('home.nextStub')}
-                className="h-7 w-7 rounded-full bg-black/[0.045] hover:bg-black/[0.09] text-muted hover:text-fg flex items-center justify-center text-[12px] transition-colors cursor-pointer"
-              >
-                ↓
-              </button>
-            </div>
-          )}
         </div>
       ) : (
         /* 总览网格模式 */
