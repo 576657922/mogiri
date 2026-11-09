@@ -18,7 +18,7 @@ import {
   type SampleOcrPreset,
   warpPerspectiveToCanvas,
 } from '../../platform';
-import { Btn, btnClass, Container, Field, Label, SectionHead, useUiStore } from '../../ui';
+import { Btn, btnClass, Container, Field, SectionHead, useUiStore } from '../../ui';
 
 const PRESET_SHORT_KEY: Record<string, 'jr' | 'flight' | 'movie' | 'concert'> = {
   'jr-shinkansen': 'jr',
@@ -27,7 +27,7 @@ const PRESET_SHORT_KEY: Record<string, 'jr' | 'flight' | 'movie' | 'concert'> = 
   'concert-live': 'concert',
 };
 
-const PRESET_CODE: Record<string, string> = {
+const _PRESET_CODE: Record<string, string> = {
   'jr-shinkansen': 'TRN',
   'flight-bcbp': 'FLT',
   'cinema-toho': 'CIN',
@@ -173,25 +173,27 @@ export const ScanFlowView: React.FC = () => {
   const polygonPoints = quad.map((p) => `${p.x * 100},${p.y * 100}`).join(' ');
 
   return (
-    <Container className="py-10 sm:py-14 space-y-14">
-      {/* 刊头 */}
-      <div className="max-w-3xl space-y-4">
-        <Label index="02">{t('scan.eyebrow')}</Label>
-        <h1 className="display text-[clamp(2.4rem,5vw,4.2rem)] text-fg">{t('scan.title')}</h1>
-        <p className="text-[15px] leading-relaxed text-muted">{t('scan.lead')}</p>
+    <Container className="py-6 sm:py-8 space-y-6">
+      {/* 顶部标题区 */}
+      <div className="space-y-1">
+        <div className="flex flex-wrap items-baseline gap-3">
+          <h1 className="text-[20px] font-semibold tracking-[-0.02em] text-fg">
+            {t('scan.eyebrow')}
+          </h1>
+          <span className="text-[13.5px] text-muted">{t('scan.lead')}</span>
+        </div>
       </div>
 
       {/* 双栏工作台 */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* 左栏：照片导入与四角透视校正 + 样本选择器 */}
-        <div className="lg:col-span-6 space-y-10">
-          <section className="space-y-5">
+        <div className="lg:col-span-6 space-y-5">
+          <section className="rounded-[20px] bg-bg-raised border border-line p-6 space-y-4">
             <SectionHead
-              index="01"
               title={t('scan.step1')}
               aside={
                 rawImageUrl ? (
-                  <label className={`${btnClass('ghost', 'h-8 px-3 text-xs')} cursor-pointer`}>
+                  <label className={`${btnClass('pill')} cursor-pointer`}>
                     <span>{t('scan.replacePhoto')}</span>
                     <input
                       type="file"
@@ -205,9 +207,9 @@ export const ScanFlowView: React.FC = () => {
             />
 
             {!rawImageUrl ? (
-              <label className="cropmarks border border-line bg-bg-raised/60 hover:bg-bg-raised transition-colors p-10 flex flex-col items-center justify-center text-center gap-2 cursor-pointer min-h-[220px]">
-                <span className="display text-2xl text-fg">{t('scan.dropTitle')}</span>
-                <span className="label">{t('scan.dropHint')}</span>
+              <label className="rounded-2xl border border-dashed border-line-strong bg-bg-subtle/50 hover:bg-bg-subtle transition-colors p-10 flex flex-col items-center justify-center text-center gap-1.5 cursor-pointer min-h-[200px]">
+                <span className="text-[15px] font-semibold text-fg">{t('scan.dropTitle')}</span>
+                <span className="text-[12px] text-muted">{t('scan.dropHint')}</span>
                 <input
                   type="file"
                   accept="image/*"
@@ -224,7 +226,7 @@ export const ScanFlowView: React.FC = () => {
                   onPointerMove={handlePointerMove}
                   onPointerUp={() => setDraggingCorner(null)}
                   onPointerLeave={() => setDraggingCorner(null)}
-                  className="relative select-none overflow-hidden border border-line bg-bg-raised touch-none"
+                  className="relative select-none overflow-hidden rounded-2xl border border-line bg-bg-subtle touch-none"
                 >
                   <img
                     ref={imgRef}
@@ -256,7 +258,7 @@ export const ScanFlowView: React.FC = () => {
                           setDraggingCorner(idx);
                         }}
                         style={{ left: `${pt.x * 100}%`, top: `${pt.y * 100}%` }}
-                        className="absolute -translate-x-1/2 -translate-y-1/2 h-4 w-4 rounded-full border-2 border-bg bg-accent cursor-grab active:cursor-grabbing"
+                        className="absolute -translate-x-1/2 -translate-y-1/2 h-4 w-4 rounded-full border-2 border-bg-raised bg-accent cursor-grab active:cursor-grabbing"
                         aria-label={`Corner ${idx + 1}`}
                       />
                     );
@@ -265,27 +267,23 @@ export const ScanFlowView: React.FC = () => {
 
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
-                    <Btn variant="solid" className="h-9 px-4 text-xs" onClick={handleApplyWarp}>
+                    <Btn variant="solid" onClick={handleApplyWarp}>
                       {t('scan.apply')}
                     </Btn>
-                    <Btn
-                      variant="outline"
-                      className="h-9 px-4 text-xs"
-                      onClick={() => setQuad(DEFAULT_QUAD)}
-                    >
+                    <Btn variant="pill" onClick={() => setQuad(DEFAULT_QUAD)}>
                       {t('scan.reset')}
                     </Btn>
                   </div>
 
                   {warpedSizeMm && (
-                    <span className="label text-fg">
+                    <span className="font-mono text-xs text-muted">
                       {t('scan.rectified', { w: warpedSizeMm.w, h: warpedSizeMm.h })}
                     </span>
                   )}
                 </div>
 
                 {warpedDataUrl && (
-                  <div className="cropmarks border border-line bg-bg-raised/60 p-4 flex justify-center">
+                  <div className="rounded-2xl bg-bg-subtle/70 p-4 flex justify-center">
                     <img
                       src={warpedDataUrl}
                       alt="Rectified ticket"
@@ -298,36 +296,32 @@ export const ScanFlowView: React.FC = () => {
           </section>
 
           {/* 4 张内置真机样本卡片 */}
-          <section className="space-y-4">
-            <div className="label">{t('scan.samplesLabel')}</div>
+          <section className="rounded-[20px] bg-bg-raised border border-line p-6 space-y-3.5">
+            <div className="text-[12.5px] font-medium text-muted">{t('scan.samplesLabel')}</div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               {SAMPLE_OCR_PRESETS.map((preset) => {
                 const shortKey = PRESET_SHORT_KEY[preset.id] ?? 'jr';
-                const code = PRESET_CODE[preset.id] ?? 'DOC';
                 const active = activePresetId === preset.id;
                 return (
                   <button
                     key={preset.id}
                     type="button"
                     onClick={() => handleSelectPreset(preset)}
-                    className={`border p-4 text-left transition-colors space-y-1.5 ${
+                    className={`rounded-2xl p-3.5 text-left transition-all cursor-pointer space-y-1 ${
                       active
-                        ? 'border-fg bg-fg text-bg'
-                        : 'border-line bg-bg-raised/40 hover:border-fg text-fg'
+                        ? 'bg-fg text-bg-raised shadow-xs'
+                        : 'bg-bg-subtle/75 hover:bg-bg-subtle text-fg'
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span
-                        className={`font-mono text-[10px] uppercase tracking-[0.16em] ${
-                          active ? 'text-bg/75' : 'text-muted'
-                        }`}
-                      >
-                        {code}
+                      <span className="text-[13.5px] font-semibold">
+                        {t(`scan.sample.${shortKey}`)}
                       </span>
-                      {active && <span className="h-1.5 w-1.5 rounded-full bg-accent" />}
+                      {active && (
+                        <span className="h-1.5 w-1.5 rounded-full bg-bg-raised shrink-0" />
+                      )}
                     </div>
-                    <div className="text-sm font-medium">{t(`scan.sample.${shortKey}`)}</div>
-                    <div className={`text-[11.5px] ${active ? 'text-bg/75' : 'text-muted'}`}>
+                    <div className={`text-[11.5px] ${active ? 'text-bg-raised/70' : 'text-muted'}`}>
                       {t(`scan.sampleMeta.${shortKey}`)}
                     </div>
                   </button>
@@ -338,8 +332,8 @@ export const ScanFlowView: React.FC = () => {
         </div>
 
         {/* 右栏：OCR 文本行与条码识别 */}
-        <div className="lg:col-span-6 space-y-6">
-          <SectionHead index="02" title={t('scan.step2')} />
+        <div className="lg:col-span-6 rounded-[20px] bg-bg-raised border border-line p-6 space-y-5">
+          <SectionHead title={t('scan.step2')} />
 
           <Field label={t('scan.ocrLabel')} htmlFor="ocr-lines-input" hint={t('scan.ocrHint')}>
             <textarea
@@ -347,7 +341,7 @@ export const ScanFlowView: React.FC = () => {
               rows={8}
               value={ocrText}
               onChange={(e) => setOcrText(e.target.value)}
-              className="mt-2 w-full border border-line bg-bg-raised/60 p-4 font-mono text-xs leading-relaxed text-fg focus:border-fg focus:outline-none"
+              className="field font-mono text-xs leading-relaxed"
             />
           </Field>
 
@@ -366,8 +360,8 @@ export const ScanFlowView: React.FC = () => {
             />
           </Field>
 
-          <div className="pt-4 border-t border-line flex flex-wrap items-center justify-between gap-4">
-            <span className="label">{t('scan.runHint')}</span>
+          <div className="pt-3 border-t border-line flex flex-wrap items-center justify-between gap-4">
+            <span className="text-[12px] text-muted">{t('scan.runHint')}</span>
             <Btn variant="solid" arrow data-testid="run-recognize" onClick={handleRunRecognize}>
               {t('scan.run')}
             </Btn>

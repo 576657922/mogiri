@@ -14,19 +14,19 @@ export function Container({
 }) {
   return (
     <div
-      className={`mx-auto w-full ${wide ? 'max-w-[1600px]' : 'max-w-[1360px]'} px-5 sm:px-8 lg:px-12 ${className}`}
+      className={`mx-auto w-full ${wide ? 'max-w-[1440px]' : 'max-w-[1160px]'} px-5 sm:px-8 ${className}`}
     >
       {children}
     </div>
   );
 }
 
-/** 进入视口时淡入上移 */
+/** 轻量进入动效 */
 export function Reveal({
   children,
   delay = 0,
   className = '',
-  y = 14,
+  y = 8,
 }: {
   children: ReactNode;
   delay?: number;
@@ -39,39 +39,24 @@ export function Reveal({
       className={className}
       initial={reduce ? false : { opacity: 0, y }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.75, delay, ease: EASE_OUT_EXPO }}
+      transition={{ duration: 0.45, delay, ease: EASE_OUT_EXPO }}
     >
       {children}
     </motion.div>
   );
 }
 
-/** 标题逐行遮罩上推 */
 export function MaskLine({
   children,
-  delay = 0,
   className = '',
 }: {
   children: ReactNode;
   delay?: number;
   className?: string;
 }) {
-  const reduce = useReducedMotion();
-  return (
-    <span className={`block overflow-hidden pb-[0.08em] ${className}`}>
-      <motion.span
-        className="block"
-        initial={reduce ? false : { y: '105%' }}
-        animate={{ y: '0%' }}
-        transition={{ duration: 1.1, delay, ease: EASE_OUT_EXPO }}
-      >
-        {children}
-      </motion.span>
-    </span>
-  );
+  return <span className={`block ${className}`}>{children}</span>;
 }
 
-/** 等宽小标签，可带编号 */
 export function Label({
   children,
   index,
@@ -84,47 +69,49 @@ export function Label({
   as?: 'span' | 'div' | 'p' | 'dt';
 }) {
   return (
-    <Tag className={`label inline-flex items-center gap-2.5 ${className}`}>
-      {index && <span className="text-fg">{index}</span>}
-      {index && <span aria-hidden className="h-px w-5 bg-line-strong" />}
+    <Tag className={`label inline-flex items-center gap-2 ${className}`}>
+      {index && <span className="text-faint">{index}</span>}
       <span>{children}</span>
     </Tag>
   );
 }
 
-/** 章节标题：编号 + 衬线标题 + 发丝线 */
 export function SectionHead({
   index,
   title,
   aside,
   className = '',
 }: {
-  index: string;
+  index?: string;
   title: ReactNode;
   aside?: ReactNode;
   className?: string;
 }) {
   return (
-    <div className={`flex items-end justify-between gap-6 border-b border-line pb-4 ${className}`}>
-      <div className="flex items-baseline gap-4">
-        <span className="label text-fg">{index}</span>
-        <h2 className="display text-[28px] sm:text-[34px]">{title}</h2>
+    <div
+      className={`flex items-center justify-between gap-4 pb-3 border-b border-line ${className}`}
+    >
+      <div className="flex items-baseline gap-2.5">
+        {index && <span className="font-mono text-[11px] text-faint">{index}</span>}
+        <h2 className="text-[16px] font-semibold tracking-[-0.015em] text-fg">{title}</h2>
       </div>
       {aside}
     </div>
   );
 }
 
-type BtnVariant = 'solid' | 'outline' | 'accent' | 'ghost';
+type BtnVariant = 'solid' | 'outline' | 'accent' | 'ghost' | 'pill';
 
 const BTN_BASE =
-  'group/btn relative inline-flex items-center justify-center gap-2.5 rounded-full text-[13px] font-medium tracking-[-0.005em] transition-[background-color,color,border-color,transform] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none whitespace-nowrap';
+  'group/btn relative inline-flex items-center justify-center gap-2 rounded-full text-[13px] font-medium tracking-[-0.01em] transition-all duration-200 active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none whitespace-nowrap cursor-pointer';
 
 const BTN_VARIANTS: Record<BtnVariant, string> = {
-  solid: 'bg-fg text-bg hover:bg-accent hover:text-accent-ink h-11 px-5',
-  accent: 'bg-accent text-accent-ink hover:bg-fg hover:text-bg h-11 px-5',
-  outline: 'border border-line-strong text-fg hover:border-fg hover:bg-fg hover:text-bg h-11 px-5',
-  ghost: 'text-fg hover:bg-fg/[0.06] h-9 px-3.5',
+  solid: 'bg-fg text-bg-raised hover:bg-fg/85 h-9 px-4 shadow-xs',
+  accent: 'bg-accent text-accent-ink hover:opacity-90 h-9 px-4 shadow-xs',
+  outline:
+    'border border-line-strong bg-bg-raised text-fg hover:bg-bg-subtle h-9 px-4 shadow-[0_1px_2px_rgba(0,0,0,0.03)]',
+  pill: 'bg-bg-subtle text-muted hover:text-fg hover:bg-[#e8e8e5] h-8 px-3.5',
+  ghost: 'text-muted hover:text-fg hover:bg-bg-subtle h-8 px-3',
 };
 
 export function btnClass(variant: BtnVariant = 'solid', extra = ''): string {
@@ -150,14 +137,14 @@ export function Arrow({ className = '' }: { className?: string }) {
   return (
     <span
       aria-hidden
-      className={`inline-block transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover/btn:translate-x-1 ${className}`}
+      className={`inline-block transition-transform duration-300 group-hover/btn:translate-x-0.5 ${className}`}
     >
       →
     </span>
   );
 }
 
-/** 文字分段选择器 */
+/** 分段胶囊选择器（recent.design 风格） */
 export function Segmented<T extends string>({
   value,
   options,
@@ -174,7 +161,7 @@ export function Segmented<T extends string>({
   return (
     <fieldset
       aria-label={ariaLabel}
-      className={`inline-flex items-center rounded-full border border-line p-[3px] m-0 ${className}`}
+      className={`inline-flex items-center rounded-full bg-bg-subtle p-1 m-0 border-0 ${className}`}
     >
       {options.map((opt) => {
         const active = opt.value === value;
@@ -184,15 +171,15 @@ export function Segmented<T extends string>({
             type="button"
             aria-pressed={active}
             onClick={() => onChange(opt.value)}
-            className={`relative h-8 rounded-full px-3.5 text-[12px] font-medium transition-colors duration-300 ${
-              active ? 'text-bg' : 'text-muted hover:text-fg'
+            className={`relative h-7 rounded-full px-3 text-[12px] font-medium transition-colors duration-200 cursor-pointer ${
+              active ? 'text-fg' : 'text-muted hover:text-fg'
             }`}
           >
             {active && (
               <motion.span
                 layoutId={`seg-${ariaLabel ?? 'x'}`}
-                className="absolute inset-0 rounded-full bg-fg"
-                transition={{ type: 'spring', stiffness: 420, damping: 36 }}
+                className="absolute inset-0 rounded-full bg-bg-raised shadow-[0_1px_3px_rgba(0,0,0,0.08)]"
+                transition={{ type: 'spring', stiffness: 450, damping: 35 }}
               />
             )}
             <span className="relative">{opt.label}</span>
@@ -203,7 +190,7 @@ export function Segmented<T extends string>({
   );
 }
 
-/** 表单字段：等宽标签 + 下划线输入 + 提示 */
+/** 表单字段 */
 export function Field({
   label,
   htmlFor,
@@ -221,20 +208,19 @@ export function Field({
 }) {
   return (
     <div className={className}>
-      <div className="flex min-h-4 items-center justify-between gap-3">
-        <label htmlFor={htmlFor} className="label">
+      <div className="flex min-h-4 items-center justify-between gap-2 mb-1.5">
+        <label htmlFor={htmlFor} className="text-[12px] font-medium text-muted">
           {label}
         </label>
         {badge}
       </div>
       {children}
-      {hint && <p className="mt-1.5 text-[11.5px] text-faint">{hint}</p>}
+      {hint && <p className="mt-1 text-[11px] text-faint">{hint}</p>}
     </div>
   );
 }
 
-/** 根据 id 生成稳定的轻微旋转角度，模拟随手放在桌上的票根 */
-export function stubTilt(id: string, max = 2.2): number {
+export function stubTilt(id: string, max = 1.6): number {
   let h = 2166136261;
   for (let i = 0; i < id.length; i++) {
     h ^= id.charCodeAt(i);
@@ -244,14 +230,13 @@ export function stubTilt(id: string, max = 2.2): number {
   return Number(((unit * 2 - 1) * max).toFixed(2));
 }
 
-/** 评分圆点 */
-export function RatingDots({ value, size = 7 }: { value: number; size?: number }) {
+export function RatingDots({ value, size = 6 }: { value: number; size?: number }) {
   return (
-    <span role="img" className="inline-flex items-center gap-1.5" aria-label={`${value} / 5`}>
+    <span role="img" className="inline-flex items-center gap-1" aria-label={`${value} / 5`}>
       {[1, 2, 3, 4, 5].map((n) => (
         <span
           key={n}
-          className={`rounded-full ${n <= value ? 'bg-fg' : 'border border-line-strong'}`}
+          className={`rounded-full ${n <= value ? 'bg-fg' : 'bg-black/12'}`}
           style={{ width: size, height: size }}
         />
       ))}

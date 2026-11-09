@@ -21,16 +21,7 @@ import {
 } from '../../data';
 import { formatEventDateDisplay, toTicketSpec } from '../../domain';
 import { downloadOrShareBlob } from '../../platform';
-import {
-  Btn,
-  btnClass,
-  Container,
-  Label,
-  RatingDots,
-  SectionHead,
-  ticketTypeCode,
-  useUiStore,
-} from '../../ui';
+import { Btn, btnClass, Container, RatingDots, SectionHead, useUiStore } from '../../ui';
 
 async function loadBlobAsImage(key: string | undefined): Promise<HTMLImageElement | undefined> {
   if (!key) return undefined;
@@ -100,7 +91,7 @@ export function TicketDetailView({ id }: { id: string }) {
         ...(faceImg ? { faceImage: faceImg } : {}),
         ...(backImg ? { backImage: backImg } : {}),
       });
-      const thumbDataUrl = renderThumbnailDataUrl(nextSpec, 640);
+      const thumbDataUrl = renderThumbnailDataUrl(nextSpec, 720);
       await db.tickets.update(ticket.id, { thumbDataUrl });
     },
     [ticket, faceImg, backImg],
@@ -128,8 +119,8 @@ export function TicketDetailView({ id }: { id: string }) {
 
   if (!ticket || !spec) {
     return (
-      <Container className="py-24 text-center space-y-5">
-        <p className="display text-3xl text-fg">{t('ticket.notFound')}</p>
+      <Container className="py-24 text-center space-y-4">
+        <p className="text-[20px] font-semibold text-fg">{t('ticket.notFound')}</p>
         <div>
           <Link to="/" className={btnClass('outline')}>
             ← {t('ticket.back')}
@@ -199,11 +190,7 @@ export function TicketDetailView({ id }: { id: string }) {
     ctx.fillStyle = 'rgba(239,233,223,0.48)';
     ctx.font = '500 20px "JetBrains Mono Variable", monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(
-      `${ticket.title.toUpperCase()}   ·   HANKEN ARCHIVE`,
-      out.width / 2,
-      out.height - 46,
-    );
+    ctx.fillText(`${ticket.title.toUpperCase()}   ·   HANKEN`, out.width / 2, out.height - 46);
 
     out.toBlob(async (blob) => {
       if (!blob) return;
@@ -294,132 +281,134 @@ export function TicketDetailView({ id }: { id: string }) {
   ];
 
   return (
-    <div className="pt-8 pb-16 space-y-12">
-      {/* 1. 顶部返回与编辑栏 */}
-      <Container>
-        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-line pb-5">
+    <Container className="py-6 sm:py-8 space-y-6">
+      {/* 1. 顶部操作导航栏 */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Link to="/" className={btnClass('pill')}>
+          <span>←</span>
+          <span>{t('ticket.back')}</span>
+        </Link>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Btn variant="pill" onClick={() => void handleExportPng()}>
+            {t('ticket.export')}
+          </Btn>
           <Link
-            to="/"
-            className="inline-flex items-center gap-2 font-mono text-xs uppercase tracking-[0.14em] text-muted hover:text-fg transition-colors"
+            to="/t/$id/edit"
+            params={{ id: ticket.id }}
+            className={btnClass('outline', 'h-8 px-3.5 text-[12.5px]')}
           >
-            <span>←</span>
-            <span>{t('ticket.back')}</span>
+            {t('ticket.edit')}
           </Link>
+          <Btn
+            variant="ghost"
+            onClick={() => void handleSoftDelete()}
+            className="text-muted hover:text-accent"
+          >
+            {t('ticket.delete')}
+          </Btn>
+        </div>
+      </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <Btn variant="ghost" onClick={() => void handleExportPng()}>
-              {t('ticket.export')}
-            </Btn>
-            <Link
-              to="/t/$id/edit"
-              params={{ id: ticket.id }}
-              className={btnClass('outline', 'h-9 px-4 text-xs')}
-            >
-              {t('ticket.edit')}
-            </Link>
-            <Btn
-              variant="ghost"
-              onClick={() => void handleSoftDelete()}
-              className="text-muted hover:text-accent"
-            >
-              {t('ticket.delete')}
-            </Btn>
+      {/* 2. 票面标题区 */}
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2 text-[12px] font-medium text-muted">
+            <span className="rounded-full bg-bg-subtle px-2.5 py-0.5 text-fg">
+              {t(`types.${ticket.type}`)}
+            </span>
+            <span>·</span>
+            <span>{t(`materials.${ticket.material}`)}</span>
+            {ticket.wear.torn && (
+              <span className="rounded-full bg-accent/10 px-2.5 py-0.5 text-accent">
+                {t('home.torn')}
+              </span>
+            )}
           </div>
+          <h1 className="text-[24px] sm:text-[32px] font-semibold tracking-[-0.025em] text-fg">
+            {ticket.title}
+          </h1>
+          {ticket.subtitle && <p className="text-[14px] text-muted">{ticket.subtitle}</p>}
         </div>
 
-        {/* 票根大标题区 */}
-        <div className="pt-8 grid grid-cols-1 lg:grid-cols-12 gap-6 items-end">
-          <div className="lg:col-span-8 space-y-3">
-            <div className="flex flex-wrap items-center gap-3">
-              <Label index={ticketTypeCode(ticket.type)}>{t(`types.${ticket.type}`)}</Label>
-              {ticket.wear.torn && (
-                <span className="border border-accent px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-accent">
-                  {t('home.torn')}
-                </span>
-              )}
+        <div className="text-[12.5px] font-mono text-muted sm:text-right">
+          <div>{formatEventDateDisplay(ticket.eventAt, i18n.language)}</div>
+          {ticket.venueName && (
+            <div className="text-fg font-sans font-medium">
+              {ticket.venueName}
+              {ticket.city ? ` · ${ticket.city}` : ''}
             </div>
-            <h1 className="display text-[clamp(2.2rem,4.5vw,4rem)] text-fg">{ticket.title}</h1>
-            {ticket.subtitle && (
-              <p className="text-base sm:text-lg text-muted">{ticket.subtitle}</p>
-            )}
-          </div>
-
-          <div className="lg:col-span-4 lg:text-right space-y-1 font-mono text-xs text-muted">
-            <div>{formatEventDateDisplay(ticket.eventAt, i18n.language)}</div>
-            {ticket.venueName && (
-              <div className="text-fg">
-                {ticket.venueName}
-                {ticket.city ? ` · ${ticket.city}` : ''}
-              </div>
-            )}
-            {ticket.seat && <div>{ticket.seat}</div>}
-          </div>
+          )}
         </div>
-      </Container>
+      </div>
 
-      {/* 2. 暗房聚光灯 3D 舞台（全局 TicketCanvas 自动覆盖 #mogiri-stage-slot） */}
-      <Container>
-        <div className="relative cropmarks spotlight border border-line bg-bg-raised/40 p-3 sm:p-6">
-          {/* 四角技术标尺信息 */}
-          <div className="pointer-events-none flex items-center justify-between gap-3 text-[10px] font-mono uppercase tracking-[0.16em] text-faint pb-2">
-            <span className="truncate">STOCK · {ticket.material.toUpperCase()}</span>
-            <span className="truncate">TEMPLATE · {spec.templateId.toUpperCase()}</span>
-          </div>
-
-          <section
-            id="mogiri-stage-slot"
-            className="w-full h-[220px] sm:h-[380px] lg:h-[480px]"
-            aria-label={ticket.title}
-          />
-
-          <div className="pointer-events-none flex flex-wrap items-center justify-between gap-2 text-[10.5px] font-mono tracking-[0.1em] text-muted pt-3 border-t border-line">
-            <span>{t('ticket.hint')}</span>
-            <span>{flipped ? 'SIDE B · REVERSE' : 'SIDE A · OBVERSE'}</span>
-          </div>
+      {/* 3. 3D 暗房检视舞台卡片（圆角黑盒 + 底部悬浮毛玻璃控制条） */}
+      <div className="relative rounded-[24px] spotlight p-4 sm:p-6 text-white shadow-[0_20px_50px_rgba(0,0,0,0.14)] overflow-hidden">
+        <div className="pointer-events-none flex items-center justify-between text-[11px] font-mono text-white/45 pb-1">
+          <span>{t('ticket.hint')}</span>
+          <span>{flipped ? 'REVERSE' : 'OBVERSE'}</span>
         </div>
 
-        {/* 物理交互控制坞 */}
-        <div className="mt-4 border border-line bg-bg-raised/70 px-4 py-3.5 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <Btn
-              variant="outline"
-              className="h-9 px-4 text-xs"
+        <section
+          id="mogiri-stage-slot"
+          className="w-full h-[240px] sm:h-[380px] lg:h-[440px]"
+          aria-label={ticket.title}
+        />
+
+        {/* 悬浮毛玻璃工具坞 */}
+        <div className="mt-2 rounded-2xl bg-white/[0.08] backdrop-blur-md border border-white/[0.1] px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
               onClick={() => setFlipped((f) => !f)}
+              className="h-8 rounded-full bg-white/12 hover:bg-white/22 px-3.5 text-[12px] font-medium text-white transition-colors cursor-pointer"
             >
               {t('ticket.flip')}
-            </Btn>
+            </button>
 
             {hasStub && (
-              <Btn
-                variant={ticket.wear.torn ? 'outline' : 'accent'}
-                className="h-9 px-4 text-xs"
+              <button
+                type="button"
                 onClick={handleToggleStub}
+                className={`h-8 rounded-full px-3.5 text-[12px] font-medium transition-colors cursor-pointer ${
+                  ticket.wear.torn
+                    ? 'bg-white/12 hover:bg-white/22 text-white'
+                    : 'bg-accent text-white hover:opacity-90'
+                }`}
               >
                 {ticket.wear.torn ? t('ticket.restore') : t('ticket.tear')}
-              </Btn>
+              </button>
             )}
 
-            <Btn variant="outline" className="h-9 px-4 text-xs" onClick={handlePunchHole}>
+            <button
+              type="button"
+              onClick={handlePunchHole}
+              className="h-8 rounded-full bg-white/12 hover:bg-white/22 px-3.5 text-[12px] font-medium text-white transition-colors cursor-pointer"
+            >
               {t('ticket.punch')}
-            </Btn>
+            </button>
 
             {ticket.wear.punches.length > 0 && (
-              <Btn variant="ghost" className="h-9 px-3 text-xs" onClick={handleClearPunches}>
+              <button
+                type="button"
+                onClick={handleClearPunches}
+                className="h-8 rounded-full bg-white/8 hover:bg-white/16 px-3 text-[12px] text-white/75 transition-colors cursor-pointer"
+              >
                 {t('ticket.clearPunches')} ({ticket.wear.punches.length})
-              </Btn>
+              </button>
             )}
 
-            <Btn
-              variant="ghost"
-              className="h-9 px-3 text-xs sm:hidden"
+            <button
+              type="button"
               onClick={() => void requestMotionPermission()}
+              className="sm:hidden h-8 rounded-full bg-white/8 hover:bg-white/16 px-3 text-[12px] text-white/75 transition-colors cursor-pointer"
             >
               {t('ticket.gyro')}
-            </Btn>
+            </button>
           </div>
 
-          <div className="flex items-center gap-3 min-w-[210px]">
-            <span className="label">{t('ticket.age')}</span>
+          <div className="flex items-center gap-2.5 min-w-[180px]">
+            <span className="text-[11.5px] text-white/65">{t('ticket.age')}</span>
             <input
               type="range"
               min={0}
@@ -427,174 +416,164 @@ export function TicketDetailView({ id }: { id: string }) {
               step={0.02}
               value={ticket.wear.age}
               onChange={(e) => handleAgeChange(Number(e.target.value))}
-              className="range w-28"
+              className="range w-24"
               aria-label={t('ticket.age')}
             />
-            <span className="font-mono text-xs text-muted w-9 text-right">
+            <span className="font-mono text-[11px] text-white/70 w-8 text-right">
               {Math.round(ticket.wear.age * 100)}%
             </span>
           </div>
         </div>
-      </Container>
+      </div>
 
-      <div aria-hidden className="perforation" />
+      {/* 4. 双栏详情 Bento 卡片 */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+        {/* 左卡片：票面规格 */}
+        <div className="lg:col-span-5 rounded-[20px] bg-bg-raised border border-line p-6 space-y-4">
+          <SectionHead title={t('form.s2')} />
+          <dl className="divide-y divide-line">
+            {specRows.map((row) => (
+              <div key={row.label} className="py-2.5 flex items-baseline justify-between gap-4">
+                <dt className="text-[12.5px] text-muted shrink-0">{row.label}</dt>
+                <dd className="text-[13px] font-medium text-fg text-right break-words">
+                  {row.value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </div>
 
-      {/* 3. 双栏档案卷宗：左栏票面规格，右栏当日回忆与现场照片 */}
-      <Container>
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
-          {/* 左栏：票面规格表 */}
-          <div className="lg:col-span-5 space-y-6">
-            <SectionHead index="01" title={t('form.s2')} />
-            <dl className="divide-y divide-line border-b border-line">
-              {specRows.map((row) => (
-                <div key={row.label} className="py-3.5 grid grid-cols-3 gap-4 items-baseline">
-                  <dt className="label">{row.label}</dt>
-                  <dd className="col-span-2 font-mono text-xs sm:text-[13px] text-fg break-words">
-                    {row.value}
-                  </dd>
-                </div>
-              ))}
-            </dl>
+        {/* 右卡片：当日记忆与照片 */}
+        <div className="lg:col-span-7 space-y-5">
+          <div className="rounded-[20px] bg-bg-raised border border-line p-6 space-y-4">
+            <SectionHead
+              title={t('ticket.memory')}
+              aside={
+                ticket.rating !== undefined ? (
+                  <RatingDots value={ticket.rating} size={7} />
+                ) : undefined
+              }
+            />
+
+            <p className="text-[16px] leading-relaxed text-fg whitespace-pre-wrap">
+              {ticket.note || <span className="text-muted">{t('ticket.noNote')}</span>}
+            </p>
+
+            {(ticket.companions.length > 0 || ticket.tags.length > 0) && (
+              <div className="flex flex-wrap items-center gap-4 pt-3 border-t border-line">
+                {ticket.companions.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[12px] text-muted">{t('ticket.companions')}</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {ticket.companions.map((c) => (
+                        <span
+                          key={c}
+                          className="rounded-full bg-bg-subtle px-2.5 py-0.5 text-[12px] font-medium text-fg"
+                        >
+                          {c}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {ticket.tags.length > 0 && (
+                  <div className="flex items-center gap-1.5">
+                    {ticket.tags.map((tg) => (
+                      <span
+                        key={tg}
+                        className="rounded-full bg-bg-subtle px-2.5 py-0.5 text-[12px] text-muted"
+                      >
+                        #{tg}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
-          {/* 右栏：那一天（回忆、同行人、评分、照片底片） */}
-          <div className="lg:col-span-7 space-y-12">
-            <div className="space-y-6">
-              <SectionHead
-                index="02"
-                title={t('ticket.memory')}
-                aside={
-                  ticket.rating !== undefined ? (
-                    <RatingDots value={ticket.rating} size={8} />
-                  ) : undefined
-                }
-              />
+          {/* 现场照片卡片 */}
+          <div className="rounded-[20px] bg-bg-raised border border-line p-6 space-y-4">
+            <SectionHead
+              title={`${t('ticket.photos')} (${mediaList.length})`}
+              aside={
+                <label className={`${btnClass('pill')} cursor-pointer`}>
+                  <span>+ {t('ticket.addPhoto')}</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={(e) => void handlePhotoUpload(e)}
+                    className="hidden"
+                  />
+                </label>
+              }
+            />
 
-              <blockquote className="display text-2xl sm:text-3xl leading-relaxed text-fg whitespace-pre-wrap">
-                {ticket.note || <span className="text-muted italic">{t('ticket.noNote')}</span>}
-              </blockquote>
+            {mediaList.length === 0 ? (
+              <p className="rounded-xl bg-bg-subtle/60 py-10 text-center text-[13px] text-muted">
+                {t('ticket.noPhotos')}
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {mediaList.map((m, idx) => (
+                  <div key={m.id} className="rounded-xl bg-bg-subtle/60 p-3 space-y-2.5">
+                    {m.dataUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setLightboxMedia(m)}
+                        className="block w-full aspect-[4/3] overflow-hidden rounded-lg bg-bg group cursor-pointer"
+                      >
+                        <img
+                          src={m.dataUrl}
+                          alt={m.caption ?? ''}
+                          className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-500"
+                        />
+                      </button>
+                    )}
 
-              {(ticket.companions.length > 0 || ticket.tags.length > 0) && (
-                <div className="flex flex-wrap items-center gap-6 pt-4 border-t border-line">
-                  {ticket.companions.length > 0 && (
-                    <div className="flex items-center gap-2.5">
-                      <span className="label">{t('ticket.companions')}</span>
-                      <div className="flex flex-wrap gap-1.5">
-                        {ticket.companions.map((c) => (
-                          <span
-                            key={c}
-                            className="border border-line-strong px-2.5 py-0.5 font-mono text-xs text-fg"
-                          >
-                            {c}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {ticket.tags.length > 0 && (
-                    <div className="flex items-center gap-2.5">
-                      <span className="label">{t('ticket.tags')}</span>
-                      <div className="flex flex-wrap gap-2">
-                        {ticket.tags.map((tg) => (
-                          <span key={tg} className="font-mono text-xs text-muted">
-                            #{tg}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* 现场照片底片墙 */}
-            <div className="space-y-6">
-              <SectionHead
-                index="03"
-                title={`${t('ticket.photos')} (${mediaList.length})`}
-                aside={
-                  <label className={`${btnClass('outline', 'h-9 px-4 text-xs')} cursor-pointer`}>
-                    <span>+ {t('ticket.addPhoto')}</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      onChange={(e) => void handlePhotoUpload(e)}
-                      className="hidden"
-                    />
-                  </label>
-                }
-              />
-
-              {mediaList.length === 0 ? (
-                <p className="border border-dashed border-line py-12 text-center text-xs text-muted">
-                  {t('ticket.noPhotos')}
-                </p>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                  {mediaList.map((m, idx) => (
-                    <div key={m.id} className="border border-line bg-bg-raised/50 p-3 space-y-3">
-                      <div className="flex items-center justify-between font-mono text-[10px] tracking-[0.16em] text-faint">
-                        <span>FRAME {String(idx + 1).padStart(2, '0')}</span>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            disabled={idx === 0}
-                            onClick={() => void handleMoveMedia(idx, -1)}
-                            className="hover:text-fg disabled:opacity-30"
-                            title={t('ticket.moveLeft')}
-                          >
-                            ←
-                          </button>
-                          <button
-                            type="button"
-                            disabled={idx === mediaList.length - 1}
-                            onClick={() => void handleMoveMedia(idx, 1)}
-                            className="hover:text-fg disabled:opacity-30"
-                            title={t('ticket.moveRight')}
-                          >
-                            →
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void deleteTicketMedia(m.id)}
-                            className="hover:text-accent ml-1"
-                          >
-                            {t('ticket.removePhoto')}
-                          </button>
-                        </div>
-                      </div>
-
-                      {m.dataUrl && (
-                        <button
-                          type="button"
-                          onClick={() => setLightboxMedia(m)}
-                          className="block w-full aspect-[4/3] overflow-hidden bg-bg group"
-                        >
-                          <img
-                            src={m.dataUrl}
-                            alt={m.caption ?? ''}
-                            className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-500"
-                          />
-                        </button>
-                      )}
-
+                    <div className="flex items-center justify-between gap-2">
                       <input
                         type="text"
                         defaultValue={m.caption ?? ''}
                         placeholder={t('ticket.captionPlaceholder')}
                         onBlur={(e) => void updateMediaCaption(m.id, e.target.value)}
-                        className="field text-xs py-1.5"
+                        className="field text-xs py-1.5 bg-bg-raised"
                       />
+                      <div className="flex items-center gap-1 text-xs text-muted shrink-0">
+                        <button
+                          type="button"
+                          disabled={idx === 0}
+                          onClick={() => void handleMoveMedia(idx, -1)}
+                          className="hover:text-fg disabled:opacity-30 px-1 cursor-pointer"
+                        >
+                          ←
+                        </button>
+                        <button
+                          type="button"
+                          disabled={idx === mediaList.length - 1}
+                          onClick={() => void handleMoveMedia(idx, 1)}
+                          className="hover:text-fg disabled:opacity-30 px-1 cursor-pointer"
+                        >
+                          →
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void deleteTicketMedia(m.id)}
+                          className="hover:text-accent px-1 cursor-pointer"
+                        >
+                          ×
+                        </button>
+                      </div>
                     </div>
-                  ))}
-                </div>
-              )}
-            </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
-      </Container>
+      </div>
 
       {/* 全屏灯箱 */}
       {lightboxMedia?.dataUrl && (
@@ -603,18 +582,18 @@ export function TicketDetailView({ id }: { id: string }) {
           aria-modal="true"
           onClick={() => setLightboxMedia(null)}
           onKeyDown={(e) => e.key === 'Escape' && setLightboxMedia(null)}
-          className="fixed inset-0 z-50 bg-black/92 flex flex-col items-center justify-center p-6 cursor-zoom-out"
+          className="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center p-6 cursor-zoom-out"
         >
           <img
             src={lightboxMedia.dataUrl}
             alt={lightboxMedia.caption ?? ''}
-            className="max-w-full max-h-[85vh] object-contain"
+            className="max-w-full max-h-[85vh] object-contain rounded-lg"
           />
           {lightboxMedia.caption && (
-            <p className="mt-4 font-mono text-xs text-stone-300">{lightboxMedia.caption}</p>
+            <p className="mt-4 text-xs text-white/80">{lightboxMedia.caption}</p>
           )}
         </div>
       )}
-    </div>
+    </Container>
   );
 }

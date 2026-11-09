@@ -4,7 +4,7 @@ import { Link, useNavigate } from '@tanstack/react-router';
 import type React from 'react';
 import { useTranslation } from 'react-i18next';
 import { recognitionToTicketDraft } from '../../domain';
-import { Btn, btnClass, Container, Label, useUiStore } from '../../ui';
+import { Btn, btnClass, Container, useUiStore } from '../../ui';
 import { TicketFormView } from '../ticket/TicketFormView';
 
 export const ScanConfirmView: React.FC = () => {
@@ -69,42 +69,36 @@ export const ScanConfirmView: React.FC = () => {
   const isDone = decision === 'done';
 
   return (
-    <Container className="py-10 sm:py-14 space-y-10">
-      {/* 顶部返回与识别结论刊头 */}
-      <div className="space-y-6 border-b border-line pb-8">
-        <Link
-          to="/scan"
-          className="inline-flex items-center gap-2 font-mono text-xs uppercase tracking-[0.14em] text-muted hover:text-fg transition-colors"
-        >
-          <span>←</span>
-          <span>{t('scan.confirm.back')}</span>
-        </Link>
-
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-end">
-          <div className="lg:col-span-7 space-y-2">
-            <Label index={isDone ? 'OK' : 'REVIEW'}>{t('scan.confirm.eyebrow')}</Label>
-            <h1 className="display text-4xl sm:text-5xl text-fg">
-              {isDone ? t('scan.confirm.titleDone') : t('scan.confirm.titleReview')}
-            </h1>
-            <p className="text-sm text-muted max-w-xl">{t(`scan.confirm.route.${decision}`)}</p>
+    <Container className="py-6 sm:py-8 space-y-6">
+      {/* 顶部返回与识别状态条 */}
+      <div className="rounded-[20px] bg-bg-raised border border-line p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <Link to="/scan" className={btnClass('pill')}>
+              ← {t('scan.confirm.back')}
+            </Link>
+            <div>
+              <h1 className="text-[17px] font-semibold tracking-[-0.015em] text-fg">
+                {isDone ? t('scan.confirm.titleDone') : t('scan.confirm.titleReview')}
+              </h1>
+              <p className="text-[12.5px] text-muted">{t(`scan.confirm.route.${decision}`)}</p>
+            </div>
           </div>
 
-          <div className="lg:col-span-5 flex flex-wrap lg:justify-end gap-3">
-            {!isDone && (
-              <Btn variant="accent" arrow onClick={handleSimulateAiRefine}>
-                {t('scan.confirm.refine')}
-              </Btn>
-            )}
-          </div>
+          {!isDone && (
+            <Btn variant="accent" arrow onClick={handleSimulateAiRefine}>
+              {t('scan.confirm.refine')}
+            </Btn>
+          )}
         </div>
 
         {matchedRules.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 pt-2">
-            <span className="label mr-1">{t('scan.confirm.rules')}:</span>
+          <div className="flex flex-wrap items-center gap-1.5 pt-3 border-t border-line">
+            <span className="text-[11.5px] text-muted mr-1">{t('scan.confirm.rules')}</span>
             {matchedRules.map((rule) => (
               <span
                 key={rule}
-                className="border border-line bg-bg-raised px-2 py-0.5 font-mono text-[10.5px] text-fg"
+                className="rounded-full bg-bg-subtle px-2.5 py-0.5 font-mono text-[11px] text-fg"
               >
                 {rule}
               </span>
