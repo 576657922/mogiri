@@ -7,10 +7,10 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "pnpm --filter @mogiri/app dev",
-    "dev:renderer": "pnpm --filter @mogiri/renderer dev",
-    "build": "pnpm -r build",
-    "typecheck": "pnpm -r typecheck",
+    "dev": "npx -y pnpm@10 --filter @mogiri/app dev",
+    "dev:renderer": "npx -y pnpm@10 --filter @mogiri/renderer dev",
+    "build": "npx -y pnpm@10 -r build",
+    "typecheck": "npx -y pnpm@10 -r typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "biome check .",
