@@ -78,6 +78,9 @@ export const en: DeepStringRecord<typeof zhCN> = {
     emptyHint: 'Scan a ticket, or start from a blank one.',
     emptyCta: 'New stub',
     clearFilters: 'Clear filters',
+    openStub: 'Inspect stub',
+    prevStub: 'Previous stub',
+    nextStub: 'Next stub',
     marquee:
       'ADMIT ONE · KEEP THIS COUPON · NON-TRANSFERABLE · VOID IF DETACHED · 半券 · ADMIT ONE',
   },

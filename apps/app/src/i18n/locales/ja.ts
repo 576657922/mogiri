@@ -78,6 +78,9 @@ export const ja: DeepStringRecord<typeof zhCN> = {
     emptyHint: 'チケットをスキャンするか、白紙から作りましょう。',
     emptyCta: '新しい半券',
     clearFilters: '絞り込みを解除',
+    openStub: '半券を見る',
+    prevStub: '前の半券',
+    nextStub: '次の半券',
     marquee:
       'ADMIT ONE · この半券をお持ちください · NON-TRANSFERABLE · 入場券 · 切り離し無効 · KEEP THIS COUPON',
   },

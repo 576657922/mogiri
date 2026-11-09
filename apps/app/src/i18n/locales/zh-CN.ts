@@ -72,6 +72,9 @@ export const zhCN = {
     emptyHint: '扫一张票，或者从空白开始。',
     emptyCta: '新建票根',
     clearFilters: '清除筛选',
+    openStub: '检视票根',
+    prevStub: '上一张',
+    nextStub: '下一张',
     marquee: 'ADMIT ONE · 请保留此半券 · NON-TRANSFERABLE · 入场凭证 · 撕下作废 · KEEP THIS COUPON',
   },
   ticket: {
