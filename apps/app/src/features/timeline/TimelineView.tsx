@@ -4,7 +4,7 @@ import { Link } from '@tanstack/react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { AnimatePresence, motion } from 'motion/react';
 import type React from 'react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { db, type TicketRecord } from '../../data';
 import { filterTickets, formatEventDateDisplay, toTicketSpec } from '../../domain';
@@ -26,45 +26,74 @@ const MONTH_ABBR = [
 ] as const;
 
 /**
- * Concept C 后方层叠票根的工业卡纸配色（由近及远：象牙白、朱红、粉青、钴蓝、暖橙黄、石墨黑、顶层米白）
+ * 语义化博朗/瑞士档案工业色系：按票种（TicketType）赋予每张票根恒定的专属顶栏色彩身份
+ * - 演出 concert：博朗信号朱红（Vermilion）
+ * - 列车 train：JR 新干线磁气钴蓝（Cobalt Blue）
+ * - 机票 flight：航空琥珀金（Aviation Amber）
+ * - 电影 movie：胶片粉青（35mm Cine Teal）
+ * - 戏剧 theater：包豪斯炭黑与帝国暖金（Charcoal & Buff）
+ * - 展览 exhibition：美术馆青瓷灰（Celadon）
+ * - 赛事 sports：赛场墨绿（Racing Green）
+ * - 其他 other：档案暖石（Archival Stone）
  */
-const STACK_DEPTH_THEMES = [
+const TICKET_TYPE_THEMES: Record<
+  TicketType,
   {
-    rim: '#f1f1ec',
-    body: '#f1f1ec',
-    ink: '#141413',
-  },
-  {
+    rim: string;
+    tabBg: string;
+    tabInk: string;
+    subInk: string;
+  }
+> = {
+  concert: {
     rim: '#d64c35',
-    body: '#e2dfd3',
-    ink: '#141413',
+    tabBg: '#e7dfd3',
+    tabInk: '#141413',
+    subInk: '#4a463f',
   },
-  {
-    rim: '#90bcc8',
-    body: '#a4cdd7',
-    ink: '#141413',
+  train: {
+    rim: '#28609c',
+    tabBg: '#3973b2',
+    tabInk: '#f7f7f3',
+    subInk: 'rgba(247,247,243,0.82)',
   },
-  {
-    rim: '#3671ae',
-    body: '#447eb9',
-    ink: '#f4f4f0',
+  flight: {
+    rim: '#d67824',
+    tabBg: '#e1cf76',
+    tabInk: '#141413',
+    subInk: '#474126',
   },
-  {
-    rim: '#de7d2c',
-    body: '#dfcf76',
-    ink: '#141413',
+  movie: {
+    rim: '#699fb0',
+    tabBg: '#9ac5d2',
+    tabInk: '#141413',
+    subInk: '#2c464f',
   },
-  {
+  theater: {
     rim: '#222220',
-    body: '#dcd79e',
-    ink: '#141413',
+    tabBg: '#dcd69c',
+    tabInk: '#141413',
+    subInk: '#45432e',
   },
-  {
-    rim: '#ecebe5',
-    body: '#ecebe5',
-    ink: '#141413',
+  exhibition: {
+    rim: '#566658',
+    tabBg: '#cbd5cc',
+    tabInk: '#141413',
+    subInk: '#384239',
   },
-] as const;
+  sports: {
+    rim: '#266348',
+    tabBg: '#b7d4c5',
+    tabInk: '#141413',
+    subInk: '#254737',
+  },
+  other: {
+    rim: '#7d7970',
+    tabBg: '#e2dfd7',
+    tabInk: '#141413',
+    subInk: '#4a4842',
+  },
+};
 
 /**
  * 生成稳定的伪随机一维条码竖线宽度序列与数字串
@@ -96,10 +125,10 @@ function buildBarcodeSpec(seed: string): {
     }
     cursorX += w + (i % 2 === 0 ? 1.6 : 2.2);
 
-    if (cursorY <= 206) {
+    if (cursorY <= 194) {
       vBars.push({ y: cursorY, h: w * 1.2 });
     }
-    cursorY += w * 1.45 + (i % 3 === 0 ? 2.6 : 1.8);
+    cursorY += w * 1.45 + (i % 3 === 0 ? 2.5 : 1.75);
 
     if (i < 11) digits += String(u);
     if (i >= 11 && i < 22) stubDigits += String(u);
@@ -113,13 +142,13 @@ function buildBarcodeSpec(seed: string): {
  * - 左侧中央半圆拇指缺口
  * - x=412 处上下半圆副券撕口缺口
  */
-function buildTicketClipPath(hideLeftNotchForBack = false): string {
+function buildTicketClipPath(): string {
   const W = 540;
   const H = 268;
   const stubX = 412;
   const stubR = 7.5;
   const leftNotchY = H / 2;
-  const leftNotchR = hideLeftNotchForBack ? 26 : 12;
+  const leftNotchR = 11.5;
 
   const parts: string[] = [];
   parts.push('M 3 0');
@@ -161,156 +190,58 @@ function buildTicketClipPath(hideLeftNotchForBack = false): string {
   return parts.join(' ');
 }
 
-const TICKET_CLIP_PATH = buildTicketClipPath(false);
-const TICKET_BACK_CLIP_PATH = buildTicketClipPath(true);
+const TICKET_CLIP_PATH = buildTicketClipPath();
 
 /**
- * 线性插值两个十六进制颜色（#rrggbb）
- */
-function lerpHexColor(hexA: string, hexB: string, t: number): string {
-  const clamped = Math.max(0, Math.min(1, t));
-  const a = Number.parseInt(hexA.slice(1), 16);
-  const b = Number.parseInt(hexB.slice(1), 16);
-  const rA = (a >> 16) & 255;
-  const gA = (a >> 8) & 255;
-  const bA = a & 255;
-  const rB = (b >> 16) & 255;
-  const gB = (b >> 8) & 255;
-  const bB = b & 255;
-  const r = Math.round(rA + (rB - rA) * clamped);
-  const g = Math.round(gA + (gB - gA) * clamped);
-  const bl = Math.round(bA + (bB - bA) * clamped);
-  return `#${((1 << 24) | (r << 16) | (g << 8) | bl).toString(16).slice(1)}`;
-}
-
-/**
- * 根据卡片固定槽位 slotKey 与连续景深 relDepth 计算当前卡纸的边框色、内衬色、油墨色与色框厚度：
- * - 每张卡片在后方叠卡区（relDepth >= 0.45）始终保有自身专属的博朗工业原色，向前递进时色彩随实体卡片一同前移，绝不发生互补色混浊
- * - 当卡片贴近前排落位区（0 < relDepth < 0.45）时，其彩色模切包边与中性象牙白（#f1f1ec）平滑融合，落位（relDepth <= 0）即成为无框纯象牙白活版主卡
- */
-function computeContinuousTheme(
-  slotKey: number,
-  relDepth: number,
-): {
-  rim: string;
-  body: string;
-  ink: string;
-  rimInsetX: number;
-  rimInsetY: number;
-  headerY: number;
-  priceY: number;
-  lowerSheetOpacity: number;
-} {
-  const frontTheme = STACK_DEPTH_THEMES[0];
-  if (relDepth <= 0.001) {
-    return {
-      rim: frontTheme.rim,
-      body: frontTheme.body,
-      ink: frontTheme.ink,
-      rimInsetX: 0,
-      rimInsetY: 0,
-      headerY: 38,
-      priceY: 35,
-      lowerSheetOpacity: 0,
-    };
-  }
-
-  // 后方 6 种博朗工业色循环分配给每个固定卡槽（slotKey = 1..6 对应 STACK_DEPTH_THEMES[1..6]）
-  const backPaletteCount = STACK_DEPTH_THEMES.length - 1;
-  const paletteIdx =
-    ((((slotKey - 1) % backPaletteCount) + backPaletteCount) % backPaletteCount) + 1;
-  const cardTheme = STACK_DEPTH_THEMES[paletteIdx] ?? STACK_DEPTH_THEMES[1];
-
-  if (relDepth < 1) {
-    // 1.0 -> 0.38 保持自身鲜明工业色顶栏；0.38 -> 0.0 与纯象牙白平滑过渡至无框主卡
-    const colorT = Math.max(0, Math.min(1, relDepth / 0.38));
-    const smoothColorT = colorT * colorT * (3 - 2 * colorT);
-    const geomT = Math.max(0, Math.min(1, relDepth));
-    return {
-      rim: lerpHexColor(frontTheme.rim, cardTheme.rim, smoothColorT),
-      body: lerpHexColor(frontTheme.body, cardTheme.body, smoothColorT),
-      ink: lerpHexColor(frontTheme.ink, cardTheme.ink, smoothColorT),
-      rimInsetX: 6.5 * smoothColorT,
-      rimInsetY: 5.5 * smoothColorT,
-      headerY: 38 - 6.5 * geomT,
-      priceY: 35 - 4.5 * geomT,
-      lowerSheetOpacity: smoothColorT,
-    };
-  }
-
-  const lowerSheetOpacity =
-    relDepth <= 1.15 ? 1 : Math.max(0, Math.min(1, 1 - (relDepth - 1.15) / 0.55));
-
-  return {
-    rim: cardTheme.rim,
-    body: cardTheme.body,
-    ink: cardTheme.ink,
-    rimInsetX: 6.5,
-    rimInsetY: 5.5,
-    headerY: 31.5,
-    priceY: 30.5,
-    lowerSheetOpacity,
-  };
-}
-
-/**
- * 计算任意连续景深 relDepth (-1..6) 的三维光学投影姿态：
- * - relDepth >= 0：沿透视递减阶梯排布
- * - relDepth < 0：前排票根保持 100% 实体不透明卡纸质感沿垂直中轴滑落，清晰显露后卡标题，仅在末段净空区柔和消隐
+ * 计算任意连续景深 relDepth (-1..6) 的三维光学投影姿态（纯数学函数，供 60fps 直接 DOM 引擎调用）：
+ * - relDepth >= 0：沿透视递减阶梯排布（每层露出顶部 26px 档案索引标签）
+ * - relDepth < 0：前排票根保持 100% 实体不透明卡纸质感沿垂直中轴滑落，清晰显露后卡标题，仅在末段柔和消隐
  */
 function computeCardStagePose(relDepth: number): {
   yPx: number;
   scale: number;
   opacity: number;
-  blurPx: number;
 } {
   if (relDepth < 0) {
     const p = Math.max(0, Math.min(1, -relDepth));
-    // 对称垂直滑落轨迹：p=0.43 时下滑约 84px，恰好完整露出后方下一张票根的顶栏与主标题
-    const yPx = (1 - (1 - p) ** 1.85) * 142;
-    // 抽离瞬间微幅浮起（+1.6%），呈现厚卡纸脱离卡槽的实体层次感
-    const scale = 1 + Math.sin(p * Math.PI) * 0.016 - p * 0.01;
-    // 前 62% 行程保持 100% 不透明实体卡纸（绝不产生半透明叠字重影），末段 38% 平滑消融
+    const yPx = (1 - (1 - p) ** 1.85) * 144;
+    const scale = 1 + Math.sin(p * Math.PI) * 0.015 - p * 0.01;
     const opacity = p <= 0.62 ? 1 : 0.5 * (1 + Math.cos(Math.PI * Math.min(1, (p - 0.62) / 0.38)));
-    const blurPx = p <= 0.68 ? 0 : ((p - 0.68) / 0.32) ** 1.3 * 3.2;
-    return { yPx, scale, opacity, blurPx };
+    return { yPx, scale, opacity };
   }
 
   const effectiveDepth = Math.max(0, relDepth);
-  const scale = 1 - effectiveDepth * 0.042;
+  const scale = 1 - effectiveDepth * 0.04;
   const whole = Math.floor(effectiveDepth);
   const frac = effectiveDepth - whole;
   let stepSumPx = 0;
   for (let k = 1; k <= whole; k++) {
-    stepSumPx += 23.2 * (1 - k * 0.042);
+    stepSumPx += 25.5 * (1 - k * 0.04);
   }
   if (frac > 0) {
-    stepSumPx += frac * 23.2 * (1 - (whole + 1) * 0.042);
+    stepSumPx += frac * 25.5 * (1 - (whole + 1) * 0.04);
   }
   const farFade = effectiveDepth > 6 ? Math.max(0, 1 - (effectiveDepth - 6)) : 1;
-  return { yPx: -stepSumPx, scale, opacity: farFade, blurPx: 0 };
+  return { yPx: -stepSumPx, scale, opacity: farFade };
 }
 
 /**
- * 模切活版印刷实体票根组件（Concept C 核心视觉载体）
- * 由连续景深 relDepth 实时驱动色彩蜕变与版面显露
+ * 模切活版印刷实体票根组件（React.memo 静态化：滚动动画期间零重绘，完全由外层 GPU 图层合成位移）
+ * - 顶部 y=0..32 为按票种（TicketType）着色的档案索引耳标（完整显示「序号 · 日期 · 标题」与「票种 · 票价」，后方叠放时绝不裁切文字）
+ * - 主体 y=32..268 为 350g 棉浆象牙白活版纸面（含暖调纸感渐变、内凹压印边框与十字套准线）
  */
-function DieCutTicketCard({
+const DieCutTicketCard = memo(function DieCutTicketCard({
   ticket,
-  relDepth,
-  slotKey,
   catalogNo,
   language,
   typeLabel,
 }: {
   ticket: TicketRecord;
-  relDepth: number;
-  slotKey: number;
   catalogNo: string;
   language: string;
   typeLabel: string;
 }) {
-  const theme = computeContinuousTheme(slotKey, relDepth);
+  const theme = TICKET_TYPE_THEMES[ticket.type] ?? TICKET_TYPE_THEMES.other;
   const barcode = useMemo(() => buildBarcodeSpec(ticket.id), [ticket.id]);
 
   const priceDisplay =
@@ -322,52 +253,44 @@ function DieCutTicketCard({
           : `¥${ticket.priceAmount.toLocaleString()}`
       : 'ADMIT ONE';
 
-  const uid = `tk-slot-${slotKey}`;
-  const isFrontShape = relDepth < 0.45;
-  const showFullTypography = relDepth < 1.85;
-  const typographyOpacity =
-    relDepth <= 1.0 ? 1 : Math.max(0, Math.min(1, 1 - (relDepth - 1.0) / 0.75));
-  const lowerSheetOpacity = theme.lowerSheetOpacity;
+  const shortDate = ticket.eventAt.slice(0, 10).replace(/-/g, '.');
+  const tabTitle = ticket.title.length > 20 ? `${ticket.title.slice(0, 20)}…` : ticket.title;
+  const clipId = `tk-clip-${ticket.id}`;
+  const paperGradId = `tk-paper-${ticket.id}`;
 
   return (
     <svg
       viewBox="0 0 540 268"
       className="w-full h-auto block select-none overflow-visible"
-      aria-label={isFrontShape ? ticket.title : undefined}
+      aria-label={ticket.title}
     >
       <title>{ticket.title}</title>
       <defs>
-        <clipPath id={uid}>
-          <path d={isFrontShape ? TICKET_CLIP_PATH : TICKET_BACK_CLIP_PATH} />
+        <clipPath id={clipId}>
+          <path d={TICKET_CLIP_PATH} />
         </clipPath>
+        <linearGradient id={paperGradId} x1="0" y1="0" x2="0.15" y2="1">
+          <stop offset="0%" stopColor="#f5f4ef" />
+          <stop offset="55%" stopColor="#f1f0ea" />
+          <stop offset="100%" stopColor="#eae8e0" />
+        </linearGradient>
       </defs>
 
-      <g clipPath={`url(#${uid})`}>
-        {/* 外层工业色框（随 relDepth 连续插值，抵达前排时平滑融化为象牙白） */}
-        <rect x="0" y="0" width="540" height="268" fill={theme.rim} />
+      <g clipPath={`url(#${clipId})`}>
+        {/* 底层 350g 象牙白活版棉纸 */}
+        <rect x="0" y="0" width="540" height="268" fill={`url(#${paperGradId})`} />
 
-        {/* 内层卡纸 */}
-        <rect
-          x={theme.rimInsetX}
-          y={theme.rimInsetY}
-          width={540 - theme.rimInsetX * 2}
-          height={268 - theme.rimInsetY * 2}
-          rx="1.5"
-          fill={theme.body}
-        />
+        {/* 顶部 32px 档案索引耳标（按票种语义着色，后方叠卡露出顶部 26px 时完整呈现档案摘要，前移落位时自然作为主卡顶栏） */}
+        <rect x="0" y="0" width="540" height="32" fill={theme.tabBg} />
+        {/* 顶部 3.5px 饱和原色模切封边 */}
+        <rect x="0" y="0" width="540" height="3.5" fill={theme.rim} />
+        {/* 左右两侧顶栏包边角 */}
+        <rect x="0" y="0" width="5" height="32" fill={theme.rim} />
+        <rect x="535" y="0" width="5" height="32" fill={theme.rim} />
 
-        {/* 紧邻主卡的后方叠卡下半部铺设象牙白活版纸面，当前卡滑落时直接显露下方完整票面 */}
-        {lowerSheetOpacity > 0.01 && (
-          <rect
-            x={theme.rimInsetX}
-            y="46"
-            width={540 - theme.rimInsetX * 2}
-            height={268 - 46 - theme.rimInsetY}
-            rx="1"
-            fill="#f1f1ec"
-            opacity={lowerSheetOpacity}
-          />
-        )}
+        {/* 顶栏与象牙白纸面之间的活版压痕分隔线 */}
+        <line x1="0" y1="32" x2="540" y2="32" stroke="rgba(20,20,19,0.14)" strokeWidth="1" />
+        <line x1="0" y1="33" x2="540" y2="33" stroke="rgba(255,255,255,0.7)" strokeWidth="1" />
 
         {/* 顶部微高光 */}
         <line
@@ -375,8 +298,81 @@ function DieCutTicketCard({
           y1="0.75"
           x2="540"
           y2="0.75"
-          stroke="rgba(255,255,255,0.65)"
-          strokeWidth="1.5"
+          stroke="rgba(255,255,255,0.55)"
+          strokeWidth="1.2"
+        />
+
+        {/* 档案索引耳标文字（垂直居中于 y=19.5，在后方叠卡露出区 100% 完整可读，序号日期与标题之间留有清晰瑞士网格间距） */}
+        <text
+          x="22"
+          y="20"
+          fill={theme.subInk}
+          fontSize="10.5"
+          fontWeight="600"
+          fontFamily="JetBrains Mono Variable, monospace"
+          letterSpacing="0.02em"
+        >
+          {catalogNo} · {shortDate}
+        </text>
+        <line
+          x1="131"
+          y1="9"
+          x2="131"
+          y2="23"
+          stroke={theme.subInk}
+          strokeOpacity="0.32"
+          strokeWidth="1"
+        />
+        <text
+          x="140"
+          y="20"
+          fill={theme.tabInk}
+          fontSize="12"
+          fontWeight="700"
+          letterSpacing="-0.01em"
+          fontFamily="Inter Variable, PingFang SC, Hiragino Sans, sans-serif"
+        >
+          {tabTitle}
+        </text>
+        <text
+          x="394"
+          y="20"
+          textAnchor="end"
+          fill={theme.tabInk}
+          fontSize="11"
+          fontWeight="600"
+          fontFamily="JetBrains Mono Variable, monospace"
+        >
+          {ticketTypeCode(ticket.type)} · {priceDisplay}
+        </text>
+        <text
+          x="476"
+          y="20"
+          textAnchor="middle"
+          fill={theme.subInk}
+          fontSize="10"
+          fontWeight="600"
+          fontFamily="JetBrains Mono Variable, monospace"
+          letterSpacing="0.05em"
+        >
+          BK #{catalogNo}
+        </text>
+
+        {/* 主券活版压印内框线（Letterpress Deboss Frame）与四角微套准十字 */}
+        <rect
+          x="18"
+          y="44"
+          width="376"
+          height="208"
+          rx="2"
+          fill="none"
+          stroke="rgba(20,20,19,0.075)"
+          strokeWidth="1"
+        />
+        <path
+          d="M 24 50 h 5 M 26.5 47.5 v 5 M 383 50 h 5 M 385.5 47.5 v 5 M 24 246 h 5 M 26.5 243.5 v 5 M 383 246 h 5 M 385.5 243.5 v 5"
+          stroke="rgba(20,20,19,0.18)"
+          strokeWidth="0.8"
         />
 
         {/* 副券纵向圆孔齿孔线 (x = 412) */}
@@ -385,168 +381,166 @@ function DieCutTicketCard({
           y1="14"
           x2="412"
           y2="254"
-          stroke={isFrontShape ? 'rgba(20,20,19,0.42)' : 'rgba(20,20,19,0.32)'}
-          strokeWidth="2.4"
+          stroke="rgba(20,20,19,0.38)"
+          strokeWidth="2.2"
           strokeLinecap="round"
           strokeDasharray="1.5 6.5"
         />
 
-        {/* 票头左侧品牌名与右侧票价（后方叠卡在顶部露出一半文字，推进至前排时平滑落位） */}
+        {/* 票面左上角分类与场馆小标 */}
+        <circle cx="34" cy="65" r="3" fill={theme.rim} />
+        <text
+          x="43"
+          y="68.5"
+          fill="#383834"
+          fontSize="10.5"
+          fontWeight="600"
+          letterSpacing="0.06em"
+          fontFamily="Inter Variable, PingFang SC, Hiragino Sans, sans-serif"
+        >
+          {ticket.type.toUpperCase()} · {typeLabel}
+          {ticket.city ? ` — ${ticket.city}` : ''}
+        </text>
+
+        {/* 右上角 Hanken 半券活版暗印章 */}
+        <text
+          x="382"
+          y="68.5"
+          textAnchor="end"
+          fill="#78766e"
+          fontSize="10"
+          fontWeight="600"
+          letterSpacing="0.04em"
+          fontFamily="JetBrains Mono Variable, monospace"
+        >
+          HANKEN 半券
+        </text>
+
+        {/* 活动主标题 */}
         <text
           x="30"
-          y={theme.headerY}
-          fill={theme.ink}
-          fontSize="21"
+          y="102"
+          fill="#141413"
+          fontSize="24.5"
           fontWeight="700"
           letterSpacing="-0.03em"
           fontFamily="Inter Variable, PingFang SC, Hiragino Sans, sans-serif"
         >
-          Hanken 半券
+          {ticket.title.length > 22 ? `${ticket.title.slice(0, 22)}…` : ticket.title}
         </text>
 
+        {/* 三行活动副信息 */}
         <text
-          x="388"
-          y={theme.priceY}
-          textAnchor="end"
-          fill={theme.ink}
-          fontSize="12.5"
+          x="30"
+          y="126"
+          fill="#30302c"
+          fontSize="11.5"
           fontWeight="500"
-          fontFamily="JetBrains Mono Variable, monospace"
-          opacity="0.88"
+          fontFamily="Inter Variable, PingFang SC, Hiragino Sans, sans-serif"
         >
-          {priceDisplay}
+          {ticket.subtitle || ticket.venueName || 'Archival Specimen'}
+        </text>
+        <text
+          x="30"
+          y="144"
+          fill="#454540"
+          fontSize="11.5"
+          fontWeight="500"
+          fontFamily="Inter Variable, PingFang SC, Hiragino Sans, sans-serif"
+        >
+          {[ticket.venueName, ticket.seat].filter(Boolean).join(' · ') || '—'}
+        </text>
+        <text
+          x="30"
+          y="162"
+          fill="#454540"
+          fontSize="11.5"
+          fontWeight="500"
+          fontFamily="JetBrains Mono Variable, PingFang SC, Hiragino Sans, sans-serif"
+        >
+          {formatEventDateDisplay(ticket.eventAt, language)}
         </text>
 
-        {/* 完整活版印刷票面 */}
-        {showFullTypography && (
-          <g opacity={typographyOpacity}>
-            {/* 票种小标 */}
-            <text
-              x="30"
-              y="82"
-              fill="#383834"
-              fontSize="10.5"
-              fontWeight="600"
-              letterSpacing="0.06em"
-              fontFamily="Inter Variable, sans-serif"
-            >
-              {ticket.type.toUpperCase()} · {typeLabel}
-            </text>
+        {/* 左下角横向一维条码 */}
+        <g transform="translate(30, 188)">
+          {barcode.hBars.map((bar) => (
+            <rect
+              key={`hb-${bar.x.toFixed(2)}`}
+              x={bar.x}
+              y={0}
+              width={bar.w}
+              height={32}
+              fill="#181816"
+            />
+          ))}
+          <text
+            x="68"
+            y="43"
+            textAnchor="middle"
+            fill="#383833"
+            fontSize="9.5"
+            fontFamily="JetBrains Mono Variable, monospace"
+            letterSpacing="0.06em"
+          >
+            {barcode.digits}
+          </text>
+        </g>
 
-            {/* 活动主标题 */}
-            <text
-              x="30"
-              y="112"
-              fill="#141413"
-              fontSize="25"
-              fontWeight="700"
-              letterSpacing="-0.03em"
-              fontFamily="Inter Variable, PingFang SC, Hiragino Sans, sans-serif"
-            >
-              {ticket.title.length > 22 ? `${ticket.title.slice(0, 22)}…` : ticket.title}
-            </text>
+        {/* 主券右下角：显式 3D 检视印章外观（视觉引导明确，配合外层 Link 锚点） */}
+        <g transform="translate(284, 198)">
+          <rect
+            x="0"
+            y="0"
+            width="98"
+            height="32"
+            rx="16"
+            fill="rgba(20,20,19,0.045)"
+            stroke="rgba(20,20,19,0.18)"
+            strokeWidth="1"
+          />
+          <text
+            x="49"
+            y="19.5"
+            textAnchor="middle"
+            fill="#191918"
+            fontSize="10.5"
+            fontWeight="600"
+            fontFamily="JetBrains Mono Variable, PingFang SC, sans-serif"
+            letterSpacing="0.02em"
+          >
+            3D 检视 ↗
+          </text>
+        </g>
 
-            {/* 三行活动副信息 */}
-            <text
-              x="30"
-              y="134"
-              fill="#383834"
-              fontSize="11.5"
-              fontWeight="500"
-              fontFamily="Inter Variable, PingFang SC, Hiragino Sans, sans-serif"
-            >
-              {ticket.subtitle || ticket.venueName || 'Archival Specimen'}
-            </text>
-            <text
-              x="30"
-              y="151"
-              fill="#383834"
-              fontSize="11.5"
-              fontWeight="500"
-              fontFamily="Inter Variable, PingFang SC, Hiragino Sans, sans-serif"
-            >
-              {[ticket.venueName, ticket.city, ticket.seat].filter(Boolean).join(' · ') || '—'}
-            </text>
-            <text
-              x="30"
-              y="168"
-              fill="#383834"
-              fontSize="11.5"
-              fontWeight="500"
-              fontFamily="Inter Variable, PingFang SC, Hiragino Sans, sans-serif"
-            >
-              {formatEventDateDisplay(ticket.eventAt, language)}
-            </text>
-
-            {/* 左下角横向一维条码 */}
-            <g transform="translate(30, 194)">
-              {barcode.hBars.map((bar) => (
-                <rect
-                  key={`hb-${bar.x.toFixed(2)}`}
-                  x={bar.x}
-                  y={0}
-                  width={bar.w}
-                  height={34}
-                  fill="#181816"
-                />
-              ))}
-              <text
-                x="68"
-                y="45"
-                textAnchor="middle"
-                fill="#2c2c28"
-                fontSize="9.5"
-                fontFamily="JetBrains Mono Variable, monospace"
-                letterSpacing="0.06em"
-              >
-                {barcode.digits}
-              </text>
-            </g>
-
-            {/* 主券右下角档案号与状态 */}
-            <text
-              x="388"
-              y="239"
-              textAnchor="end"
-              fill={ticket.wear.torn ? '#d94832' : '#2c2c28'}
-              fontSize="11"
-              fontWeight="600"
-              fontFamily="JetBrains Mono Variable, monospace"
-            >
-              {ticket.wear.torn ? `TORN · #${catalogNo}` : `BK #${catalogNo}`}
-            </text>
-
-            {/* 右侧副券纵向条码 */}
-            <g transform="translate(442, 30)">
-              {barcode.vBars.map((bar) => (
-                <rect
-                  key={`vb-${bar.y.toFixed(2)}`}
-                  x={0}
-                  y={bar.y}
-                  width={42}
-                  height={bar.h}
-                  fill="#181816"
-                />
-              ))}
-              <text
-                x="52"
-                y="104"
-                textAnchor="middle"
-                transform="rotate(-90 52 104)"
-                fill="#2c2c28"
-                fontSize="9.5"
-                fontFamily="JetBrains Mono Variable, monospace"
-                letterSpacing="0.08em"
-              >
-                {barcode.stubDigits}
-              </text>
-            </g>
-          </g>
-        )}
+        {/* 右侧副券纵向条码 */}
+        <g transform="translate(442, 46)">
+          {barcode.vBars.map((bar) => (
+            <rect
+              key={`vb-${bar.y.toFixed(2)}`}
+              x={0}
+              y={bar.y}
+              width={42}
+              height={bar.h}
+              fill="#181816"
+            />
+          ))}
+          <text
+            x="52"
+            y="98"
+            textAnchor="middle"
+            transform="rotate(-90 52 98)"
+            fill="#2c2c28"
+            fontSize="9.5"
+            fontFamily="JetBrains Mono Variable, monospace"
+            letterSpacing="0.08em"
+          >
+            {barcode.stubDigits}
+          </text>
+        </g>
       </g>
     </svg>
   );
-}
+});
 
 /**
  * 原彩缩略图卡片（供总览网格模式使用）
@@ -585,8 +579,8 @@ export function TimelineView() {
 
   const [typeFilter, setTypeFilter] = useState<TicketType | 'all'>('all');
   const [query, setQuery] = useState('');
-  // 连续浮点物理游标 animatedCursor：由临界阻尼弹簧引擎（或拖拽手势）驱动，联动 7 层叠卡、毫米刻度尺与金属滚花转轮
-  const [animatedCursor, setAnimatedCursor] = useState(0);
+  // React 状态仅在整数索引切换时更新一次（用于顶部仪表读数），60fps 动画完全绕过 React 直接写 DOM
+  const [activeIndex, setActiveIndex] = useState(0);
   const [showFilterBar, setShowFilterBar] = useState(false);
 
   const posRef = useRef(0);
@@ -594,72 +588,25 @@ export function TimelineView() {
   const targetRef = useRef(0);
   const rafRef = useRef<number | null>(null);
   const lastFrameTimeRef = useRef<number>(0);
+  const activeIndexRef = useRef(0);
+
+  // 直接 DOM 引用集合（60fps 帧循环内零 React 调和开销）
+  const cardElsRef = useRef<Map<number, HTMLDivElement>>(new Map());
+  const rulerTicksGroupRef = useRef<SVGGElement | null>(null);
+  const monthDrumGroupRef = useRef<SVGGElement | null>(null);
+  const knurledWheelRef = useRef<HTMLDivElement | null>(null);
 
   const dragStartRef = useRef<{
     y: number;
     t: number;
-    startCursor: number;
+    startPos: number;
     lastY: number;
     lastT: number;
     velPxPerMs: number;
     moved: boolean;
   } | null>(null);
-  const wheelLockRef = useRef<number>(0);
-
-  const startSpringLoop = useCallback(() => {
-    if (rafRef.current !== null) return;
-    lastFrameTimeRef.current = performance.now();
-
-    const tick = (now: number) => {
-      const dt = Math.min(0.032, Math.max(0.004, (now - lastFrameTimeRef.current) / 1000));
-      lastFrameTimeRef.current = now;
-
-      // 临界阻尼弹簧参数（stiffness=152, damping=24.2，无多余震荡回弹，如徕卡对焦环般顺滑落位）
-      const stiffness = 152;
-      const damping = 24.2;
-      const displacement = posRef.current - targetRef.current;
-      const accel = -stiffness * displacement - damping * velRef.current;
-
-      velRef.current += accel * dt;
-      posRef.current += velRef.current * dt;
-
-      if (
-        Math.abs(targetRef.current - posRef.current) < 0.0008 &&
-        Math.abs(velRef.current) < 0.002
-      ) {
-        posRef.current = targetRef.current;
-        velRef.current = 0;
-        setAnimatedCursor(posRef.current);
-        rafRef.current = null;
-        return;
-      }
-
-      setAnimatedCursor(posRef.current);
-      rafRef.current = requestAnimationFrame(tick);
-    };
-
-    rafRef.current = requestAnimationFrame(tick);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
-    };
-  }, []);
-
-  const resetCursor = useCallback(() => {
-    if (rafRef.current !== null) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    }
-    posRef.current = 0;
-    velRef.current = 0;
-    targetRef.current = 0;
-    setAnimatedCursor(0);
-  }, []);
+  const wheelSnapTimerRef = useRef<number | null>(null);
+  const lastDiscreteWheelRef = useRef<number>(0);
 
   const allActive = useLiveQuery(
     () => db.tickets.where('status').equals('active').toArray(),
@@ -667,7 +614,7 @@ export function TimelineView() {
     [] as TicketRecord[],
   );
 
-  // 按时间倒序排列
+  // 按时间倒序排列（最新活动在前排 index=0，向后依次为更早的归档票根）
   const sortedActive = useMemo(
     () => [...allActive].sort((a, b) => b.eventAt.localeCompare(a.eventAt)),
     [allActive],
@@ -685,14 +632,164 @@ export function TimelineView() {
   );
 
   const total = filtered.length;
-  const nearestCursor = Math.round(animatedCursor);
-  const safeIndex = total === 0 ? 0 : ((nearestCursor % total) + total) % total;
-  const activeTicket = filtered[safeIndex] ?? null;
+  const clampedActiveIndex = total === 0 ? 0 : Math.max(0, Math.min(total - 1, activeIndex));
+  const activeTicket = filtered[clampedActiveIndex] ?? null;
+
+  /**
+   * 60fps 直接 DOM 合成器更新：只写 style.transform / opacity / SVG transform，耗时 < 0.1ms
+   */
+  const applyRolodexFrame = useCallback(
+    (pos: number) => {
+      const maxIndex = Math.max(0, total - 1);
+      const nearest = Math.max(0, Math.min(maxIndex, Math.round(pos)));
+
+      if (nearest !== activeIndexRef.current) {
+        activeIndexRef.current = nearest;
+        setActiveIndex(nearest);
+      }
+
+      for (const [slotIdx, el] of cardElsRef.current.entries()) {
+        const relDepth = slotIdx - pos;
+        if (relDepth <= -0.995 || relDepth >= 6.95) {
+          el.style.visibility = 'hidden';
+          el.style.opacity = '0';
+          el.style.pointerEvents = 'none';
+          el.removeAttribute('data-ticket-id');
+          el.removeAttribute('data-slot-depth');
+          continue;
+        }
+        const { yPx, scale, opacity } = computeCardStagePose(relDepth);
+        const zOrder = Math.round((20 - relDepth) * 10);
+        const isFrontCard = slotIdx === nearest;
+
+        el.style.visibility = opacity <= 0.005 ? 'hidden' : 'visible';
+        el.style.zIndex = String(zOrder);
+        el.style.transform = `translate3d(0px, ${yPx.toFixed(2)}px, 0px) scale(${scale.toFixed(4)})`;
+        el.style.opacity = String(Number(opacity.toFixed(4)));
+        el.style.pointerEvents = relDepth < -0.05 ? 'none' : 'auto';
+
+        if (isFrontCard) {
+          const tkId = el.getAttribute('data-card-id');
+          if (tkId) el.setAttribute('data-ticket-id', tkId);
+        } else {
+          el.removeAttribute('data-ticket-id');
+        }
+        el.setAttribute('data-slot-depth', String(Math.round(relDepth)));
+      }
+
+      // 联动右侧毫米尺（单次修改 <g> transform，避免逐根修改 65 条 <line>）
+      if (rulerTicksGroupRef.current) {
+        const phaseY = (((pos * 24) % 16) + 16) % 16;
+        rulerTicksGroupRef.current.setAttribute('transform', `translate(0, ${phaseY.toFixed(2)})`);
+      }
+
+      // 联动右侧标准日历月份转鼓（DEC · NOV · OCT · SEP · AUG...，当前票所属月份精准对准 y=138 朱红指针线）
+      if (monthDrumGroupRef.current && filtered.length > 0) {
+        const clampedPos = Math.max(0, Math.min(maxIndex, pos));
+        const lowIdx = Math.floor(clampedPos);
+        const highIdx = Math.min(maxIndex, lowIdx + 1);
+        const frac = clampedPos - lowIdx;
+        const lowMonth = Number(filtered[lowIdx]?.eventAt.slice(5, 7)) || 11;
+        const highMonth = Number(filtered[highIdx]?.eventAt.slice(5, 7)) || lowMonth;
+        const lowStep = 12 - lowMonth;
+        const highStep = 12 - highMonth;
+        const interpStep = lowStep + (highStep - lowStep) * frac;
+        const drumY = 138 - interpStep * 56;
+        monthDrumGroupRef.current.setAttribute('transform', `translate(0, ${drumY.toFixed(2)})`);
+      }
+
+      // 联动金属滚花转轮纹理相位
+      if (knurledWheelRef.current) {
+        knurledWheelRef.current.style.backgroundPositionY = `${(pos * 28).toFixed(2)}px, 0px`;
+      }
+    },
+    [total, filtered],
+  );
+
+  const startSpringLoop = useCallback(() => {
+    if (rafRef.current !== null) return;
+    lastFrameTimeRef.current = performance.now();
+
+    const tick = (now: number) => {
+      const dt = Math.min(0.032, Math.max(0.004, (now - lastFrameTimeRef.current) / 1000));
+      lastFrameTimeRef.current = now;
+
+      // 临界阻尼弹簧参数（stiffness=160, damping=25.2，快速顺滑且无多余震荡）
+      const stiffness = 160;
+      const damping = 25.2;
+      const displacement = posRef.current - targetRef.current;
+      const accel = -stiffness * displacement - damping * velRef.current;
+
+      velRef.current += accel * dt;
+      posRef.current += velRef.current * dt;
+
+      if (
+        Math.abs(targetRef.current - posRef.current) < 0.0008 &&
+        Math.abs(velRef.current) < 0.002
+      ) {
+        posRef.current = targetRef.current;
+        velRef.current = 0;
+        applyRolodexFrame(posRef.current);
+        rafRef.current = null;
+        return;
+      }
+
+      applyRolodexFrame(posRef.current);
+      rafRef.current = requestAnimationFrame(tick);
+    };
+
+    rafRef.current = requestAnimationFrame(tick);
+  }, [applyRolodexFrame]);
+
+  // 初始挂载或列表变化时同步一次 DOM 姿态
+  useEffect(() => {
+    applyRolodexFrame(posRef.current);
+  }, [applyRolodexFrame]);
+
+  useEffect(() => {
+    return () => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      if (wheelSnapTimerRef.current !== null) {
+        window.clearTimeout(wheelSnapTimerRef.current);
+      }
+    };
+  }, []);
+
+  const resetCursor = useCallback(() => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    posRef.current = 0;
+    velRef.current = 0;
+    targetRef.current = 0;
+    activeIndexRef.current = 0;
+    setActiveIndex(0);
+    applyRolodexFrame(0);
+  }, [applyRolodexFrame]);
+
+  const jumpToIndex = useCallback(
+    (nextIdx: number) => {
+      if (total <= 1) return;
+      const clamped = Math.max(0, Math.min(total - 1, nextIdx));
+      targetRef.current = clamped;
+      startSpringLoop();
+    },
+    [total, startSpringLoop],
+  );
 
   const stepBy = useCallback(
     (delta: number) => {
       if (total <= 1 || delta === 0) return;
-      targetRef.current = Math.round(targetRef.current) + delta;
+      const currentTarget = Math.round(targetRef.current);
+      const rawNext = currentTarget + delta;
+      // 有限档案盒逻辑：抵达末尾后若继续点击翻页，平滑归位至首张（0），绝不在同一画面重复渲染同一张票
+      const nextTarget =
+        rawNext > total - 1 ? 0 : rawNext < 0 ? 0 : Math.max(0, Math.min(total - 1, rawNext));
+      targetRef.current = nextTarget;
       startSpringLoop();
     },
     [total, startSpringLoop],
@@ -729,18 +826,51 @@ export function TimelineView() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [timelineView, stepBy]);
 
-  // 鼠标滚轮 / 触控板顺滑翻动卡槽
+  // 触控板与滚轮：支持连续增量累积 + 停顿后自动吸附至最近整数卡槽，消除惯性尾巴误翻
   const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
     if (total <= 1) return;
-    const now = performance.now();
-    if (now - wheelLockRef.current < 210) return;
     const primary = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
-    if (Math.abs(primary) < 10) return;
-    wheelLockRef.current = now;
-    stepBy(primary > 0 ? 1 : -1);
+    if (Math.abs(primary) < 2) return;
+
+    const now = performance.now();
+    const isDiscreteMouseWheel =
+      Math.abs(primary) >= 48 && now - lastDiscreteWheelRef.current > 220;
+
+    if (isDiscreteMouseWheel) {
+      lastDiscreteWheelRef.current = now;
+      const next = Math.max(
+        0,
+        Math.min(total - 1, Math.round(targetRef.current) + (primary > 0 ? 1 : -1)),
+      );
+      targetRef.current = next;
+      startSpringLoop();
+      return;
+    }
+
+    // 连续触控板滚动：按比例推进 target 并加边界橡皮筋阻尼，手势停止 130ms 后自动吸附至最近整数卡槽
+    const maxIdx = total - 1;
+    const deltaCursor = primary * 0.0038;
+    const rawTarget = targetRef.current + deltaCursor;
+    const dampedTarget =
+      rawTarget < 0
+        ? Math.max(-0.28, rawTarget * 0.28)
+        : rawTarget > maxIdx
+          ? Math.min(maxIdx + 0.28, maxIdx + (rawTarget - maxIdx) * 0.28)
+          : rawTarget;
+
+    targetRef.current = dampedTarget;
+    startSpringLoop();
+
+    if (wheelSnapTimerRef.current !== null) {
+      window.clearTimeout(wheelSnapTimerRef.current);
+    }
+    wheelSnapTimerRef.current = window.setTimeout(() => {
+      targetRef.current = Math.max(0, Math.min(maxIdx, Math.round(targetRef.current)));
+      startSpringLoop();
+    }, 130);
   };
 
-  // 上下拖拽手势（1:1 实时跟手驱动 animatedCursor，松手后将动量无缝移交弹簧引擎归位）
+  // 上下拖拽手势（1:1 直接驱动 DOM，含首尾橡皮筋阻尼，松手后将动量移交弹簧引擎吸附）
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (total <= 1) return;
     if (rafRef.current !== null) {
@@ -751,7 +881,7 @@ export function TimelineView() {
     dragStartRef.current = {
       y: e.clientY,
       t: now,
-      startCursor: posRef.current,
+      startPos: posRef.current,
       lastY: e.clientY,
       lastT: now,
       velPxPerMs: 0,
@@ -771,12 +901,15 @@ export function TimelineView() {
     start.lastY = e.clientY;
     start.lastT = now;
 
-    // 向下拖动 150px 对应完整抽离 1 张票根
-    const nextPos = start.startCursor + dy / 150;
-    posRef.current = nextPos;
-    targetRef.current = nextPos;
+    const maxIdx = Math.max(0, total - 1);
+    const rawPos = start.startPos + dy / 148;
+    const dampedPos =
+      rawPos < 0 ? rawPos * 0.28 : rawPos > maxIdx ? maxIdx + (rawPos - maxIdx) * 0.28 : rawPos;
+
+    posRef.current = dampedPos;
+    targetRef.current = dampedPos;
     velRef.current = 0;
-    setAnimatedCursor(nextPos);
+    applyRolodexFrame(dampedPos);
   };
 
   const handlePointerEnd = () => {
@@ -784,66 +917,49 @@ export function TimelineView() {
     if (!start) return;
     dragStartRef.current = null;
 
+    const maxIdx = Math.max(0, total - 1);
     if (!start.moved) {
-      targetRef.current = Math.round(posRef.current);
+      targetRef.current = Math.max(0, Math.min(maxIdx, Math.round(posRef.current)));
       startSpringLoop();
       return;
     }
 
-    const cursorVel = (start.velPxPerMs * 1000) / 150;
+    const cursorVel = (start.velPxPerMs * 1000) / 148;
     velRef.current = cursorVel;
     const projected = posRef.current + cursorVel * 0.14;
-    const baseRound = Math.round(start.startCursor);
+    const baseRound = Math.round(start.startPos);
     const diff = projected - baseRound;
 
-    if (diff > 0.22) {
-      targetRef.current = baseRound + Math.max(1, Math.round(diff));
-    } else if (diff < -0.22) {
-      targetRef.current = baseRound + Math.min(-1, Math.round(diff));
-    } else {
-      targetRef.current = baseRound;
+    let nextTarget = baseRound;
+    if (diff > 0.2) {
+      nextTarget = baseRound + Math.max(1, Math.round(diff));
+    } else if (diff < -0.2) {
+      nextTarget = baseRound + Math.min(-1, Math.round(diff));
     }
+    targetRef.current = Math.max(0, Math.min(maxIdx, nextTarget));
     startSpringLoop();
   };
 
-  // 生成围绕当前浮点游标 animatedCursor 的连续虚拟槽位序列（relDepth 覆盖 -1..6）
-  const baseFloor = Math.floor(animatedCursor);
-  const visibleStack = useMemo(() => {
-    if (total === 0) return [];
-    const layers: {
-      slotKey: number;
-      ticket: TicketRecord;
-      itemIndex: number;
-    }[] = [];
-    for (let offset = 7; offset >= -1; offset--) {
-      const slotKey = baseFloor + offset;
-      const idx = ((slotKey % total) + total) % total;
-      const tk = filtered[idx];
+  // 有限不重复叠卡列表（按从远到近排序挂载，确保每张真实票根只出现一次）
+  const stackItems = useMemo(() => {
+    const items: { slotIndex: number; ticket: TicketRecord; catalogNo: string }[] = [];
+    for (let i = total - 1; i >= 0; i--) {
+      const tk = filtered[i];
       if (tk) {
-        layers.push({ slotKey, ticket: tk, itemIndex: idx });
+        items.push({
+          slotIndex: i,
+          ticket: tk,
+          catalogNo: String(total - i).padStart(3, '0'),
+        });
       }
     }
-    return layers;
-  }, [filtered, baseFloor, total]);
+    return items;
+  }, [filtered, total]);
 
-  // 右侧刻度尺的 4 个月份标签（自上而下 AUG · SEP · OCT · NOV，红线居中介于 SEP 与 OCT 之间）
-  const dialMonths = useMemo(() => {
-    const activeMonthNum = activeTicket ? Number(activeTicket.eventAt.slice(5, 7)) || 10 : 10;
-    const m0 = MONTH_ABBR[(activeMonthNum - 1 + 12) % 12] ?? 'OCT';
-    const mPrev1 = MONTH_ABBR[(activeMonthNum - 2 + 12) % 12] ?? 'SEP';
-    const mPrev2 = MONTH_ABBR[(activeMonthNum - 3 + 12) % 12] ?? 'AUG';
-    const mNext1 = MONTH_ABBR[activeMonthNum % 12] ?? 'NOV';
-    return [
-      { label: mPrev2, step: 2, y: 44, opacity: 0.34, weight: 600 },
-      { label: mPrev1, step: 1, y: 106, opacity: 0.68, weight: 700 },
-      { label: m0, step: 0, y: 170, opacity: 0.92, weight: 700 },
-      { label: mNext1, step: -1, y: 232, opacity: 0.28, weight: 500 },
-    ];
-  }, [activeTicket]);
-
-  // 滚轮与月份刻度盘的连续微位移相位
-  const cursorFrac = animatedCursor - nearestCursor;
-  const rulerPhasePx = (((animatedCursor * 16) % 16) + 16) % 16;
+  const activeTheme = activeTicket
+    ? (TICKET_TYPE_THEMES[activeTicket.type] ?? TICKET_TYPE_THEMES.other)
+    : TICKET_TYPE_THEMES.concert;
+  const activeMonthNum = activeTicket ? Number(activeTicket.eventAt.slice(5, 7)) || 11 : 11;
   const hasActiveFilters = typeFilter !== 'all' || query.trim() !== '';
 
   return (
@@ -942,94 +1058,174 @@ export function TimelineView() {
           </div>
         </div>
       ) : timelineView === 'stack' ? (
-        /* Concept C 主舞台：中央 3D 纵向景深叠卡 + 右侧博朗机械滚轮刻度尺（底部保持纯粹负空间） */
+        /* Concept C 主舞台：上方博朗精密仪表读数条 + 中央有限景深叠卡 + 右侧啮合机械滚轮 */
         <div
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerEnd}
           onPointerCancel={handlePointerEnd}
-          className="flex-1 flex flex-col items-center justify-center py-4 touch-none"
+          className="flex-1 flex flex-col items-center justify-center pb-6 pt-1 touch-none"
         >
-          <div className="relative z-30 flex items-center justify-center w-full max-w-[940px]">
-            {/* 中央纵向景深卡槽（由连续浮点游标 animatedCursor 直接同步驱动每一层的位移、缩放、色彩蜕变与景深柔焦） */}
-            <div className="relative w-full max-w-[540px] h-[350px] sm:h-[420px] flex items-end justify-center pb-2">
-              {visibleStack.map(({ slotKey, ticket, itemIndex }) => {
-                const relDepth = slotKey - animatedCursor;
-                if (relDepth <= -0.995 || relDepth >= 6.95) return null;
+          {/* 顶部博朗仪器式档案读数栏（填补上方视觉留白，并在移动端与桌面端同步提供精准位置、月份与微调拨钮） */}
+          {activeTicket && (
+            <div className="w-full max-w-[540px] mb-4 sm:mb-5 px-1 flex items-center justify-between gap-2 text-[11px] font-mono text-muted z-30 whitespace-nowrap">
+              <div className="flex items-center gap-2 shrink-0">
+                <span
+                  className="inline-block w-2 h-2 rounded-full shrink-0"
+                  style={{ backgroundColor: activeTheme.rim }}
+                />
+                <span className="font-semibold text-fg tracking-wider">
+                  {String(clampedActiveIndex + 1).padStart(2, '0')} /{' '}
+                  {String(total).padStart(2, '0')}
+                </span>
+                <span className="text-black/20">·</span>
+                <span className="font-sans font-medium text-fg/85">
+                  {t(`types.${activeTicket.type}`)}
+                </span>
+              </div>
 
-                const isFrontActive = Math.abs(relDepth) < 0.45;
-                const isPeeling = relDepth < -0.005;
-                const catalogNo = String(total - itemIndex).padStart(3, '0');
-                const { yPx, scale, opacity, blurPx } = computeCardStagePose(relDepth);
-                const zOrder = Math.round((7 - relDepth) * 10);
+              {/* 中央可点击机械刻度槽（每张票对应一根精密游标刻度，红针指示当前前排票根） */}
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/[0.04] shrink-0">
+                {filtered.map((tk, idx) => {
+                  const isCurrent = idx === clampedActiveIndex;
+                  return (
+                    <button
+                      key={`gauge-${tk.id}`}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        jumpToIndex(idx);
+                      }}
+                      aria-label={`${idx + 1}: ${tk.title}`}
+                      className="p-0.5 cursor-pointer flex items-center"
+                    >
+                      <span
+                        className={`block rounded-full transition-all duration-200 ${
+                          isCurrent
+                            ? 'w-4 h-1.5 bg-[#d64c35]'
+                            : 'w-1.5 h-1.5 bg-black/22 hover:bg-black/45'
+                        }`}
+                      />
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* 右侧日期/月份读数与上下微调拨钮（移动端显示月份缩写补齐右侧转轮信息，桌面端显示完整日期） */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span className="sm:hidden tracking-wider font-semibold text-fg/80 mr-0.5">
+                  {MONTH_ABBR[activeMonthNum - 1] ?? 'NOV'}
+                </span>
+                <span className="hidden sm:inline tracking-tight text-fg/80 mr-1">
+                  {activeTicket.eventAt.slice(0, 10).replace(/-/g, '.')}
+                </span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    stepBy(-1);
+                  }}
+                  aria-label={t('home.prevStub')}
+                  className="w-6 h-6 rounded-full bg-black/[0.045] hover:bg-black/[0.10] text-fg flex items-center justify-center text-[11px] transition-colors cursor-pointer"
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    stepBy(1);
+                  }}
+                  aria-label={t('home.nextStub')}
+                  className="w-6 h-6 rounded-full bg-black/[0.045] hover:bg-black/[0.10] text-fg flex items-center justify-center text-[11px] transition-colors cursor-pointer"
+                >
+                  ↓
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="relative z-30 flex items-center justify-center w-full max-w-[940px]">
+            {/* 中央纵向景深卡槽（纯 GPU 合成层：零 filter 重绘，丝滑满帧 60fps） */}
+            <div className="relative w-full max-w-[540px] h-[340px] sm:h-[372px] flex items-end justify-center pb-1">
+              {stackItems.map(({ slotIndex, ticket, catalogNo }) => {
+                const initialRelDepth = slotIndex - posRef.current;
+                const initialPose = computeCardStagePose(initialRelDepth);
+                const initialZ = Math.round((20 - initialRelDepth) * 10);
+                const isInitialFront = slotIndex === clampedActiveIndex;
 
                 return (
-                  // biome-ignore lint/a11y/noStaticElementInteractions: 全局键盘上下/左右方向键已绑定翻票，此处为卡片表面点击与拖拽手势容器
-                  // biome-ignore lint/a11y/useKeyWithClickEvents: 全局键盘上下/左右方向键已绑定翻票
+                  // biome-ignore lint/a11y/noStaticElementInteractions: 全局方向键与顶部仪表按钮已支持无障碍翻页与跳转
+                  // biome-ignore lint/a11y/useKeyWithClickEvents: 全局键盘方向键已监听翻票
                   <div
-                    key={`slot-${slotKey}`}
-                    data-ticket-id={isFrontActive ? ticket.id : undefined}
-                    data-slot-depth={Math.round(relDepth)}
+                    key={ticket.id}
+                    ref={(el) => {
+                      if (el) {
+                        cardElsRef.current.set(slotIndex, el);
+                      } else {
+                        cardElsRef.current.delete(slotIndex);
+                      }
+                    }}
+                    data-card-id={ticket.id}
+                    data-ticket-id={isInitialFront ? ticket.id : undefined}
+                    data-slot-depth={Math.round(initialRelDepth)}
                     style={{
-                      zIndex: zOrder,
+                      zIndex: initialZ,
                       transformOrigin: '50% 0%',
-                      transform: `translate3d(0px, ${yPx.toFixed(2)}px, 0px) scale(${scale.toFixed(4)})`,
-                      opacity: Number(opacity.toFixed(4)),
-                      filter: isPeeling
-                        ? `drop-shadow(0 -3px 7px rgba(18, 17, 15, 0.11)) drop-shadow(0 24px 30px rgba(18, 17, 15, 0.16))${
-                            blurPx > 0.08 ? ` blur(${blurPx.toFixed(2)}px)` : ''
-                          }`
-                        : undefined,
-                      pointerEvents: isPeeling ? 'none' : 'auto',
-                      willChange: 'transform, opacity, filter',
+                      transform: `translate3d(0px, ${initialPose.yPx.toFixed(2)}px, 0px) scale(${initialPose.scale.toFixed(4)})`,
+                      opacity: Number(initialPose.opacity.toFixed(4)),
+                      willChange: 'transform, opacity',
                     }}
                     onClick={() => {
-                      if (dragStartRef.current?.moved || isPeeling) return;
-                      const roundedDepth = Math.round(relDepth);
-                      stepBy(roundedDepth <= 0 ? 1 : roundedDepth);
+                      if (dragStartRef.current?.moved) return;
+                      const currentNearest = Math.round(posRef.current);
+                      if (slotIndex === currentNearest) {
+                        stepBy(1);
+                      } else if (slotIndex > currentNearest) {
+                        jumpToIndex(slotIndex);
+                      }
                     }}
-                    className={`absolute bottom-2 w-full cursor-pointer ${
-                      isPeeling
-                        ? ''
-                        : relDepth <= 0.35
-                          ? 'rolodex-shadow'
-                          : 'drop-shadow-[0_-2px_5px_rgba(0,0,0,0.10)] hover:brightness-[1.015]'
-                    }`}
+                    className="absolute bottom-1 w-full cursor-pointer"
                   >
+                    {/* 静态 GPU 九宫格阴影底衬（替代高开销的 SVG drop-shadow 滤镜，满帧 0ms 合成） */}
+                    <div
+                      aria-hidden="true"
+                      className="absolute inset-x-[5px] top-[5px] bottom-[3px] rounded-[5px] pointer-events-none"
+                      style={{
+                        boxShadow:
+                          '0 20px 30px -6px rgba(18, 17, 15, 0.16), 0 4px 10px -2px rgba(18, 17, 15, 0.08), 0 -2px 6px rgba(18, 17, 15, 0.08)',
+                      }}
+                    />
+
                     <DieCutTicketCard
                       ticket={ticket}
-                      relDepth={relDepth}
-                      slotKey={slotKey}
                       catalogNo={catalogNo}
                       language={i18n.language}
                       typeLabel={t(`types.${ticket.type}`)}
                     />
 
-                    {/* 前排主卡右下角档案号检视入口：点击进入 3D 实体检视舞台，不遮挡整卡翻页手势 */}
-                    {isFrontActive && (
-                      <Link
-                        to="/t/$id"
-                        params={{ id: ticket.id }}
-                        onClick={(e) => e.stopPropagation()}
-                        aria-label={`${t('home.openStub')} ${ticket.title}`}
-                        title={t('home.openStub')}
-                        className="absolute right-[26%] bottom-[5%] w-[19%] h-[14%] rounded-md hover:bg-black/[0.04] transition-colors"
-                      />
-                    )}
+                    {/* 票面右下角显式「3D 检视 ↗」印章热区：点击直达 3D 实体检视舞台 */}
+                    <Link
+                      to="/t/$id"
+                      params={{ id: ticket.id }}
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label={`${t('home.openStub')} ${ticket.title}`}
+                      title={t('home.openStub')}
+                      className="absolute right-[24.5%] bottom-[8.5%] w-[19.5%] h-[13.5%] rounded-full hover:bg-black/[0.04] transition-colors"
+                    />
                   </div>
                 );
               })}
             </div>
 
-            {/* 右侧：博朗机械滚花转轮 + 蚀刻毫米尺 + 纵向月份刻度 + 朱红指针线（与 animatedCursor 1:1 机械啮合） */}
+            {/* 右侧：博朗机械滚花转轮 + 蚀刻毫米尺 + 连续月份转鼓 + 朱红指针线 */}
             <div
               onPointerDown={handlePointerDown}
               onPointerMove={handlePointerMove}
               onPointerUp={handlePointerEnd}
-              className="hidden sm:flex items-center ml-12 lg:ml-16 relative py-4 cursor-ns-resize select-none"
+              className="hidden sm:flex items-center ml-12 lg:ml-16 relative py-2 cursor-ns-resize select-none"
               title="Scroll or drag thumbwheel to flip tickets"
             >
-              {/* 精密 SVG 毫米刻度尺 + 纵向旋转月份 + 朱红水平指针线 */}
               <svg
                 width="62"
                 height="276"
@@ -1037,73 +1233,99 @@ export function TimelineView() {
                 className="block overflow-visible"
                 aria-hidden="true"
               >
-                {/* 65 条精密水平毫米刻度线（随滚轮连续传动，上下两端光学渐隐） */}
-                {Array.from({ length: 65 }).map((_, idx) => {
-                  const baseTickY = 10 + idx * 4;
-                  const shiftedY = 10 + ((((baseTickY - 10 + rulerPhasePx) % 256) + 256) % 256);
-                  const isMajor = idx % 4 === 0;
-                  const distFromEdge = Math.min(shiftedY - 10, 266 - shiftedY);
-                  const edgeFade = Math.max(0, Math.min(1, distFromEdge / 28));
-                  return (
-                    <line
-                      key={`ruler-tick-${baseTickY}`}
-                      x1={isMajor ? 11 : 16}
-                      y1={shiftedY}
-                      x2={22}
-                      y2={shiftedY}
-                      stroke="#191918"
-                      strokeWidth={isMajor ? '1.1' : '0.85'}
-                      strokeOpacity={(isMajor ? 0.38 : 0.22) * edgeFade}
-                    />
-                  );
-                })}
+                <defs>
+                  {/* 上下两端平滑渐隐遮罩：让毫米刻度尺与月份转鼓在滚动时仅需单次修改 <g> transform */}
+                  <linearGradient id="rolodex-dial-fade" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="white" stopOpacity="0" />
+                    <stop offset="14%" stopColor="white" stopOpacity="1" />
+                    <stop offset="86%" stopColor="white" stopOpacity="1" />
+                    <stop offset="100%" stopColor="white" stopOpacity="0" />
+                  </linearGradient>
+                  <mask id="rolodex-dial-mask">
+                    <rect x="0" y="6" width="62" height="264" fill="url(#rolodex-dial-fade)" />
+                  </mask>
+                </defs>
 
-                {/* 纵向旋转月份标签（AUG · SEP · OCT · NOV，随弹簧相位连续滚动） */}
-                <g transform={`translate(0, ${(-cursorFrac * 38).toFixed(2)})`}>
-                  {dialMonths.map((m) => (
-                    // biome-ignore lint/a11y/noStaticElementInteractions: 刻度盘鼠标辅助点击跳转（键盘已由全局方向键监听处理）
-                    <g
-                      key={`dial-svg-${m.step}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (m.step !== 0) stepBy(m.step);
-                      }}
-                      className="cursor-pointer"
-                    >
-                      <text
-                        x="38"
-                        y={m.y}
-                        transform={`rotate(-90 38 ${m.y})`}
-                        textAnchor="middle"
-                        dominantBaseline="central"
-                        fill="#191918"
-                        fillOpacity={m.opacity}
-                        fontSize="15.5"
-                        fontWeight={m.weight}
-                        letterSpacing="0.08em"
-                        fontFamily="Inter Variable, sans-serif"
-                      >
-                        {m.label}
-                      </text>
-                    </g>
-                  ))}
+                <g mask="url(#rolodex-dial-mask)">
+                  {/* 72 条静态水平毫米刻度线（通过父级 <g> transform 实现 60fps 零开销滚动） */}
+                  <g ref={rulerTicksGroupRef} transform="translate(0, 0)">
+                    {Array.from({ length: 72 }).map((_, idx) => {
+                      const y = -10 + idx * 4;
+                      const isMajor = idx % 4 === 0;
+                      return (
+                        <line
+                          key={`ruler-tick-${y}`}
+                          x1={isMajor ? 11 : 16}
+                          y1={y}
+                          x2={22}
+                          y2={y}
+                          stroke="#191918"
+                          strokeWidth={isMajor ? '1.1' : '0.85'}
+                          strokeOpacity={isMajor ? 0.38 : 0.22}
+                        />
+                      );
+                    })}
+                  </g>
 
-                  {/* 月份之间的三枚圆点分隔符 */}
-                  <circle cx="38" cy="75" r="1.4" fill="#191918" fillOpacity="0.35" />
-                  <circle cx="38" cy="138" r="1.5" fill="#191918" fillOpacity="0.85" />
-                  <circle cx="38" cy="201" r="1.4" fill="#191918" fillOpacity="0.35" />
+                  {/* 标准 12 月份连续日历转鼓（DEC · NOV · OCT · SEP · AUG...，当前票所属月份精准对准 y=138 朱红指针线，绝不重复显示同名月份） */}
+                  <g ref={monthDrumGroupRef} transform="translate(0, 82)">
+                    {Array.from({ length: 12 }).map((_, stepIdx) => {
+                      const monthNum = 12 - stepIdx;
+                      const mLabel = MONTH_ABBR[monthNum - 1] ?? 'NOV';
+                      const yPos = stepIdx * 56;
+                      const isCurrentMonth = monthNum === activeMonthNum;
+                      return (
+                        // biome-ignore lint/a11y/noStaticElementInteractions: 刻度盘鼠标辅助点击跳转
+                        <g
+                          key={`drum-month-${mLabel}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const matchIdx = filtered.findIndex(
+                              (tk) => (Number(tk.eventAt.slice(5, 7)) || 11) <= monthNum,
+                            );
+                            jumpToIndex(matchIdx >= 0 ? matchIdx : filtered.length - 1);
+                          }}
+                          className="cursor-pointer"
+                        >
+                          <text
+                            x="38"
+                            y={yPos}
+                            transform={`rotate(-90 38 ${yPos})`}
+                            textAnchor="middle"
+                            dominantBaseline="central"
+                            fill="#191918"
+                            fillOpacity={isCurrentMonth ? 0.94 : 0.4}
+                            fontSize="14.5"
+                            fontWeight={isCurrentMonth ? 700 : 600}
+                            letterSpacing="0.08em"
+                            fontFamily="Inter Variable, sans-serif"
+                          >
+                            {mLabel}
+                          </text>
+                          {stepIdx < 11 && (
+                            <circle
+                              cx="38"
+                              cy={yPos + 28}
+                              r="1.35"
+                              fill="#191918"
+                              fillOpacity="0.32"
+                            />
+                          )}
+                        </g>
+                      );
+                    })}
+                  </g>
                 </g>
 
                 {/* 贯穿刻度尺与中心点的朱红机械指针线（精准指向金属滚轮正中央 y=138） */}
                 <line x1="0" y1="138" x2="62" y2="138" stroke="#d64c35" strokeWidth="1.5" />
               </svg>
 
-              {/* 机械滚轮凹槽与金属滚花转轮（与 y=138 垂直居中对齐，60fps 实时啮合滚动） */}
+              {/* 机械滚轮凹槽与金属滚花转轮 */}
               <div className="w-[13px] h-[168px] rounded-full wheel-trough flex items-center justify-center relative -ml-[1px]">
                 <div
-                  style={{
-                    backgroundPositionY: `${(animatedCursor * 28).toFixed(2)}px, 0px`,
-                  }}
+                  ref={knurledWheelRef}
+                  style={{ backgroundPositionY: '0px, 0px' }}
                   className="w-[10.5px] h-[94px] rounded-[4px] knurled-wheel"
                 />
               </div>
