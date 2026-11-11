@@ -16,12 +16,31 @@ import {
   type MediaRecord,
   reorderTicketMedia,
   softDeleteTicket,
+  type TicketRecord,
   updateMediaCaption,
   updateTicket,
 } from '../../data';
 import { formatEventDateDisplay, toTicketSpec } from '../../domain';
-import { downloadOrShareBlob } from '../../platform';
-import { Btn, btnClass, Container, RatingDots, SectionHead, useUiStore } from '../../ui';
+import {
+  downloadOrShareBlob,
+  playDetentClick,
+  playPaperFlip,
+  playPunchClack,
+  playTearRip,
+} from '../../platform';
+import {
+  Btn,
+  btnClass,
+  Container,
+  getTicketTypeTheme,
+  MATERIAL_SWATCH_BG,
+  RatingDots,
+  SectionHead,
+  type StageBackdrop,
+  useUiStore,
+} from '../../ui';
+
+type PosterEdition = 'obsidian' | 'ivory' | 'vermilion';
 
 async function loadBlobAsImage(key: string | undefined): Promise<HTMLImageElement | undefined> {
   if (!key) return undefined;
@@ -42,12 +61,174 @@ async function loadBlobAsImage(key: string | undefined): Promise<HTMLImageElemen
   });
 }
 
+/**
+ * 冲印 1800×1200 展签级分享海报（支持三款装裱底色 + SHARE-03 条码与精确座位隐私打码）
+ */
+function buildArchivalPosterCanvas(opts: {
+  ticket: TicketRecord;
+  spec: ReturnType<typeof toTicketSpec>;
+  edition: PosterEdition;
+  redactPrivacy: boolean;
+  catalogNo: string;
+  dateText: string;
+  redactedLabel: string;
+}): HTMLCanvasElement {
+  const { ticket, spec, edition, redactPrivacy, catalogNo, dateText, redactedLabel } = opts;
+  const effectiveSpec = redactPrivacy
+    ? {
+        ...spec,
+        fields: {
+          ...spec.fields,
+          seat: '•••',
+          barcode: 'REDACTED-PRIVACY',
+        },
+      }
+    : spec;
+
+  const cardCanvas = renderTicketCardCanvas(effectiveSpec, 1600);
+  const out = document.createElement('canvas');
+  out.width = 1800;
+  out.height = 1200;
+  const ctx = out.getContext('2d');
+  if (!ctx) return out;
+
+  const palette =
+    edition === 'ivory'
+      ? {
+          bg0: '#f6f4ed',
+          bg1: '#e7e4da',
+          ink: '#171715',
+          sub: 'rgba(23,23,21,0.52)',
+          rule: 'rgba(23,23,21,0.14)',
+          accent: '#d64c35',
+          shadow: 'rgba(20,19,16,0.24)',
+        }
+      : edition === 'vermilion'
+        ? {
+            bg0: '#cf4832',
+            bg1: '#9f2f1e',
+            ink: '#fbfaf6',
+            sub: 'rgba(251,250,246,0.72)',
+            rule: 'rgba(251,250,246,0.22)',
+            accent: '#fbfaf6',
+            shadow: 'rgba(15,8,6,0.48)',
+          }
+        : {
+            bg0: '#211f1d',
+            bg1: '#0e0d0c',
+            ink: '#f4f1ea',
+            sub: 'rgba(244,241,234,0.52)',
+            rule: 'rgba(244,241,234,0.14)',
+            accent: '#d64c35',
+            shadow: 'rgba(0,0,0,0.68)',
+          };
+
+  const bg = ctx.createRadialGradient(900, 540, 80, 900, 600, 1050);
+  bg.addColorStop(0, palette.bg0);
+  bg.addColorStop(1, palette.bg1);
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, out.width, out.height);
+
+  // 展签外框细线与四角靶标
+  ctx.strokeStyle = palette.rule;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(56, 56, out.width - 112, out.height - 112);
+
+  // 顶部档案铭文
+  ctx.fillStyle = palette.sub;
+  ctx.font = '600 21px "JetBrains Mono Variable", monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText(`HANKEN 半券  ·  SPECIMEN #${catalogNo}`, 96, 108);
+
+  ctx.textAlign = 'right';
+  ctx.fillText(
+    redactPrivacy ? `${ticket.type.toUpperCase()}  ·  ${redactedLabel}` : ticket.type.toUpperCase(),
+    out.width - 96,
+    108,
+  );
+
+  // 居中绘制高分辨率仿真票面
+  const scale = Math.min(
+    (out.width * 0.78) / cardCanvas.width,
+    (out.height * 0.62) / cardCanvas.height,
+  );
+  const dw = cardCanvas.width * scale;
+  const dh = cardCanvas.height * scale;
+  const dx = (out.width - dw) / 2;
+  const dy = (out.height - dh) / 2 - 24;
+
+  ctx.save();
+  ctx.shadowColor = palette.shadow;
+  ctx.shadowBlur = 58;
+  ctx.shadowOffsetY = 28;
+  ctx.drawImage(cardCanvas, dx, dy, dw, dh);
+  ctx.restore();
+
+  // 若开启隐私打码，在副券条码区加盖半透明斜纹护封章
+  if (redactPrivacy) {
+    const stampW = Math.round(dw * 0.2);
+    const stampH = Math.round(dh * 0.42);
+    const sx = dx + dw - stampW - dw * 0.03;
+    const sy = dy + dh * 0.34;
+    ctx.save();
+    ctx.fillStyle = 'rgba(20,20,19,0.82)';
+    ctx.beginPath();
+    ctx.roundRect(sx, sy, stampW, stampH, 10);
+    ctx.fill();
+    ctx.strokeStyle = palette.accent;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '700 16px "JetBrains Mono Variable", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('REDACTED', sx + stampW / 2, sy + stampH / 2 + 6);
+    ctx.restore();
+  }
+
+  // 底部展签主标题与时间场馆脚注
+  ctx.fillStyle = palette.ink;
+  ctx.font = '700 34px "Inter Variable", "PingFang SC", "Hiragino Sans", sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(ticket.title, 96, out.height - 116);
+
+  ctx.fillStyle = palette.sub;
+  ctx.font = '500 21px "JetBrains Mono Variable", "PingFang SC", sans-serif';
+  const venuePart = [ticket.venueName, ticket.city].filter(Boolean).join(' · ');
+  const seatPart = !redactPrivacy && ticket.seat ? `  ·  ${ticket.seat}` : '';
+  ctx.fillText(
+    `${dateText}${venuePart ? `  ·  ${venuePart}` : ''}${seatPart}`,
+    96,
+    out.height - 80,
+  );
+
+  ctx.fillStyle = palette.accent;
+  ctx.beginPath();
+  ctx.arc(out.width - 104, out.height - 96, 8, 0, Math.PI * 2);
+  ctx.fill();
+
+  return out;
+}
+
 export function TicketDetailView({ id }: { id: string }) {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const setActiveStage = useUiStore((s) => s.setActiveStage);
+  const resolvedQuality = useUiStore((s) => s.resolvedQuality);
+  const stageBackdrop = useUiStore((s) => s.stageBackdrop);
+  const setStageBackdrop = useUiStore((s) => s.setStageBackdrop);
 
   const ticket = useLiveQuery(() => db.tickets.get(id), [id]);
+  const allActive = useLiveQuery(
+    () => db.tickets.where('status').equals('active').toArray(),
+    [],
+    [] as TicketRecord[],
+  );
+
+  const sortedActive = useMemo(
+    () => [...allActive].sort((a, b) => b.eventAt.localeCompare(a.eventAt)),
+    [allActive],
+  );
+
   const mediaList = useLiveQuery(
     async () => {
       const items = await db.media.where('ticketId').equals(id).toArray();
@@ -61,6 +242,18 @@ export function TicketDetailView({ id }: { id: string }) {
   const [faceImg, setFaceImg] = useState<HTMLImageElement | undefined>(undefined);
   const [backImg, setBackImg] = useState<HTMLImageElement | undefined>(undefined);
   const [lightboxMedia, setLightboxMedia] = useState<MediaRecord | null>(null);
+
+  // 海报冲印工作室弹窗状态（默认开启 SHARE-03 隐私打码）
+  const [posterOpen, setPosterOpen] = useState(false);
+  const [posterEdition, setPosterEdition] = useState<PosterEdition>('obsidian');
+  const [redactPrivacy, setRedactPrivacy] = useState(true);
+  const [posterPreviewUrl, setPosterPreviewUrl] = useState<string>('');
+  const [lastTicketId, setLastTicketId] = useState(id);
+
+  if (lastTicketId !== id) {
+    setLastTicketId(id);
+    setFlipped(false);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -99,11 +292,12 @@ export function TicketDetailView({ id }: { id: string }) {
 
   const handleTearFromStage = useCallback(() => {
     if (!ticket) return;
+    playTearRip();
     void persistWear({ ...ticket.wear, torn: true });
   }, [ticket, persistWear]);
 
   useEffect(() => {
-    if (!spec) {
+    if (!spec || posterOpen || lightboxMedia) {
       setActiveStage(null);
       return;
     }
@@ -115,7 +309,33 @@ export function TicketDetailView({ id }: { id: string }) {
     return () => {
       setActiveStage(null);
     };
-  }, [spec, flipped, handleTearFromStage, setActiveStage]);
+  }, [spec, flipped, posterOpen, lightboxMedia, handleTearFromStage, setActiveStage]);
+
+  const currentIdx = useMemo(
+    () => sortedActive.findIndex((tk) => tk.id === id),
+    [sortedActive, id],
+  );
+  const catalogNo =
+    currentIdx >= 0 ? String(sortedActive.length - currentIdx).padStart(3, '0') : '001';
+  const prevTicket = currentIdx > 0 ? sortedActive[currentIdx - 1] : undefined;
+  const nextTicket =
+    currentIdx >= 0 && currentIdx < sortedActive.length - 1
+      ? sortedActive[currentIdx + 1]
+      : undefined;
+
+  useEffect(() => {
+    if (!posterOpen || !ticket || !spec) return;
+    const canvas = buildArchivalPosterCanvas({
+      ticket,
+      spec,
+      edition: posterEdition,
+      redactPrivacy,
+      catalogNo,
+      dateText: formatEventDateDisplay(ticket.eventAt, i18n.language),
+      redactedLabel: t('ticket.poster.redactedStamp'),
+    });
+    setPosterPreviewUrl(canvas.toDataURL('image/png'));
+  }, [posterOpen, ticket, spec, posterEdition, redactPrivacy, catalogNo, i18n.language, t]);
 
   if (!ticket || !spec) {
     return (
@@ -131,17 +351,21 @@ export function TicketDetailView({ id }: { id: string }) {
   }
 
   const tpl = getTemplate(spec.templateId);
+  const sizeMm = spec.sizeMm ?? tpl.size;
   const hasStub = Boolean(tpl.stub);
+  const theme = getTicketTypeTheme(ticket.type);
+  const isLightStage = stageBackdrop === 'limestone';
 
   const handleToggleStub = () => {
+    playTearRip();
     void persistWear({ ...ticket.wear, torn: !ticket.wear.torn });
   };
 
   const handlePunchHole = () => {
-    const size = spec.sizeMm ?? tpl.size;
+    playPunchClack();
     const newPunch = {
-      x: Number((6 + Math.random() * Math.min(28, size.w * 0.25)).toFixed(1)),
-      y: Number((8 + Math.random() * (size.h - 16)).toFixed(1)),
+      x: Number((6 + Math.random() * Math.min(28, sizeMm.w * 0.25)).toFixed(1)),
+      y: Number((8 + Math.random() * (sizeMm.h - 16)).toFixed(1)),
     };
     void persistWear({
       ...ticket.wear,
@@ -150,6 +374,7 @@ export function TicketDetailView({ id }: { id: string }) {
   };
 
   const handleClearPunches = () => {
+    playDetentClick();
     void persistWear({ ...ticket.wear, punches: [] });
   };
 
@@ -157,44 +382,23 @@ export function TicketDetailView({ id }: { id: string }) {
     void persistWear({ ...ticket.wear, age: ageVal });
   };
 
-  const handleExportPng = async () => {
-    const cardCanvas = renderTicketCardCanvas(spec, 1600);
-    const out = document.createElement('canvas');
-    out.width = 1800;
-    out.height = 1200;
-    const ctx = out.getContext('2d');
-    if (!ctx) return;
-
-    const bg = ctx.createRadialGradient(900, 560, 80, 900, 600, 1000);
-    bg.addColorStop(0, '#1e1c19');
-    bg.addColorStop(1, '#0e0d0c');
-    ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, out.width, out.height);
-
-    const scale = Math.min(
-      (out.width * 0.84) / cardCanvas.width,
-      (out.height * 0.76) / cardCanvas.height,
-    );
-    const dw = cardCanvas.width * scale;
-    const dh = cardCanvas.height * scale;
-    const dx = (out.width - dw) / 2;
-    const dy = (out.height - dh) / 2 - 20;
-
-    ctx.save();
-    ctx.shadowColor = 'rgba(0,0,0,0.68)';
-    ctx.shadowBlur = 52;
-    ctx.shadowOffsetY = 26;
-    ctx.drawImage(cardCanvas, dx, dy, dw, dh);
-    ctx.restore();
-
-    ctx.fillStyle = 'rgba(239,233,223,0.48)';
-    ctx.font = '500 20px "JetBrains Mono Variable", monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(`${ticket.title.toUpperCase()}   ·   HANKEN`, out.width / 2, out.height - 46);
-
-    out.toBlob(async (blob) => {
+  const handleDownloadPoster = async () => {
+    const canvas = buildArchivalPosterCanvas({
+      ticket,
+      spec,
+      edition: posterEdition,
+      redactPrivacy,
+      catalogNo,
+      dateText: formatEventDateDisplay(ticket.eventAt, i18n.language),
+      redactedLabel: t('ticket.poster.redactedStamp'),
+    });
+    canvas.toBlob(async (blob) => {
       if (!blob) return;
-      await downloadOrShareBlob(blob, `${ticket.title.replace(/\s+/g, '-')}.png`, ticket.title);
+      await downloadOrShareBlob(
+        blob,
+        `hanken-${catalogNo}-${ticket.title.replace(/\s+/g, '-')}.png`,
+        ticket.title,
+      );
     }, 'image/png');
   };
 
@@ -242,10 +446,11 @@ export function TicketDetailView({ id }: { id: string }) {
     await reorderTicketMedia(ticket.id, ids);
   };
 
-  const specRows: { label: string; value: string }[] = [
+  const specRows: { label: string; value: string; mono?: boolean }[] = [
     {
       label: t('ticket.specDate'),
       value: `${formatEventDateDisplay(ticket.eventAt, i18n.language)} (${ticket.eventTz})`,
+      mono: true,
     },
     ...(ticket.venueName || ticket.city
       ? [
@@ -255,15 +460,11 @@ export function TicketDetailView({ id }: { id: string }) {
           },
         ]
       : []),
-    ...(ticket.seat ? [{ label: t('ticket.specSeat'), value: ticket.seat }] : []),
-    ...(ticket.priceAmount !== undefined
-      ? [
-          {
-            label: t('ticket.specPrice'),
-            value: `${ticket.priceCurrency ?? 'JPY'} ${ticket.priceAmount.toLocaleString()}`,
-          },
-        ]
-      : []),
+    {
+      label: t('ticket.specDimensions'),
+      value: `${sizeMm.w} × ${sizeMm.h} mm`,
+      mono: true,
+    },
     {
       label: t('ticket.specMaterial'),
       value: t(`materials.${ticket.material}`),
@@ -280,23 +481,75 @@ export function TicketDetailView({ id }: { id: string }) {
       })),
   ];
 
+  const backdropOptions: { id: StageBackdrop; swatch: string }[] = [
+    { id: 'obsidian', swatch: '#181816' },
+    { id: 'limestone', swatch: '#dfddd5' },
+    { id: 'velvet', swatch: '#3d1c1d' },
+  ];
+
   return (
-    <Container className="py-6 sm:py-8 space-y-6">
-      {/* 1. 顶部操作导航栏 */}
+    <Container className="py-4 sm:py-5 space-y-4 sm:space-y-5">
+      {/* 1. 顶部档案导航与操作台 */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Link to="/" className={btnClass('pill')}>
-          <span>←</span>
-          <span>{t('ticket.back')}</span>
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link to="/" onClick={() => playPaperFlip()} className={btnClass('pill')}>
+            <span>←</span>
+            <span>{t('ticket.back')}</span>
+          </Link>
+
+          {/* 馆藏前后快速翻阅拨片 */}
+          {(prevTicket || nextTicket) && (
+            <div className="inline-flex items-center rounded-full recessed-plinth p-0.5">
+              {prevTicket ? (
+                <Link
+                  to="/t/$id"
+                  params={{ id: prevTicket.id }}
+                  onClick={() => playDetentClick()}
+                  title={prevTicket.title}
+                  className="h-7 px-2.5 rounded-full text-[11.5px] font-mono text-muted hover:text-fg flex items-center transition-colors"
+                >
+                  ← {t('ticket.prevStub')}
+                </Link>
+              ) : (
+                <span className="h-7 px-2.5 text-[11.5px] font-mono text-faint/50 flex items-center">
+                  ←
+                </span>
+              )}
+              <span className="h-3.5 w-px bg-black/10" />
+              {nextTicket ? (
+                <Link
+                  to="/t/$id"
+                  params={{ id: nextTicket.id }}
+                  onClick={() => playDetentClick()}
+                  title={nextTicket.title}
+                  className="h-7 px-2.5 rounded-full text-[11.5px] font-mono text-muted hover:text-fg flex items-center transition-colors"
+                >
+                  {t('ticket.nextStub')} →
+                </Link>
+              ) : (
+                <span className="h-7 px-2.5 text-[11.5px] font-mono text-faint/50 flex items-center">
+                  →
+                </span>
+              )}
+            </div>
+          )}
+        </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <Btn variant="pill" onClick={() => void handleExportPng()}>
-            {t('ticket.export')}
+          <Btn
+            variant="solid"
+            onClick={() => {
+              playPaperFlip();
+              setPosterOpen(true);
+            }}
+          >
+            <span>✦</span>
+            <span>{t('ticket.export')}</span>
           </Btn>
           <Link
             to="/t/$id/edit"
             params={{ id: ticket.id }}
-            className={btnClass('outline', 'h-8 px-3.5 text-[12.5px]')}
+            className={btnClass('outline', 'h-9 px-3.5 text-[12.5px]')}
           >
             {t('ticket.edit')}
           </Link>
@@ -310,31 +563,43 @@ export function TicketDetailView({ id }: { id: string }) {
         </div>
       </div>
 
-      {/* 2. 票面标题区 */}
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2 text-[12px] font-medium text-muted">
-            <span className="rounded-full bg-bg-subtle px-2.5 py-0.5 text-fg">
-              {t(`types.${ticket.type}`)}
+      {/* 2. 典藏展签级标题区 */}
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3 pb-1">
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2 text-[11.5px] font-medium text-muted">
+            <span className="font-mono text-[11px] tracking-wider text-fg font-semibold">
+              {t('ticket.catalog', { no: catalogNo })}
             </span>
             <span>·</span>
-            <span>{t(`materials.${ticket.material}`)}</span>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-bg-raised border border-line px-2.5 py-0.5 text-fg">
+              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: theme.rim }} />
+              {t(`types.${ticket.type}`)}
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-bg-raised border border-line px-2.5 py-0.5 text-fg">
+              <span
+                className="w-2 h-2 rounded-full border border-black/15"
+                style={{ background: MATERIAL_SWATCH_BG[ticket.material] }}
+              />
+              {t(`materials.${ticket.material}`)}
+            </span>
             {ticket.wear.torn && (
-              <span className="rounded-full bg-accent/10 px-2.5 py-0.5 text-accent">
+              <span className="rounded-full bg-accent/12 px-2.5 py-0.5 text-accent font-semibold">
                 {t('home.torn')}
               </span>
             )}
           </div>
-          <h1 className="text-[24px] sm:text-[32px] font-semibold tracking-[-0.025em] text-fg">
+          <h1 className="text-[26px] sm:text-[34px] font-semibold tracking-[-0.03em] leading-[1.12] text-fg">
             {ticket.title}
           </h1>
-          {ticket.subtitle && <p className="text-[14px] text-muted">{ticket.subtitle}</p>}
+          {ticket.subtitle && <p className="text-[14.5px] text-muted">{ticket.subtitle}</p>}
         </div>
 
-        <div className="text-[12.5px] font-mono text-muted sm:text-right">
-          <div>{formatEventDateDisplay(ticket.eventAt, i18n.language)}</div>
+        <div className="text-[12.5px] font-mono text-muted sm:text-right shrink-0">
+          <div className="tabular-nums">
+            {formatEventDateDisplay(ticket.eventAt, i18n.language)}
+          </div>
           {ticket.venueName && (
-            <div className="text-fg font-sans font-medium">
+            <div className="text-fg font-sans font-medium mt-0.5">
               {ticket.venueName}
               {ticket.city ? ` · ${ticket.city}` : ''}
             </div>
@@ -342,57 +607,170 @@ export function TicketDetailView({ id }: { id: string }) {
         </div>
       </div>
 
-      {/* 3. 3D 暗房检视舞台卡片（圆角黑盒 + 底部悬浮毛玻璃控制条） */}
-      <div className="relative rounded-[24px] spotlight p-4 sm:p-6 text-white shadow-[0_20px_50px_rgba(0,0,0,0.14)] overflow-hidden">
-        <div className="pointer-events-none flex items-center justify-between text-[11px] font-mono text-white/45 pb-1">
-          <span>{t('ticket.hint')}</span>
-          <span>{flipped ? 'REVERSE' : 'OBVERSE'}</span>
+      {/* 3. 3D 光学检视暗房舞台（支持三档光学底衬 + 四角取景准星 + 磨砂控制台） */}
+      <div
+        className={`relative rounded-[26px] stage-${stageBackdrop} p-3.5 sm:p-5 ${
+          isLightStage
+            ? 'text-fg border border-line shadow-[0_18px_40px_rgba(20,20,18,0.08)]'
+            : 'text-white shadow-[0_24px_56px_rgba(15,14,12,0.22)]'
+        } overflow-hidden transition-colors duration-300`}
+      >
+        {/* 顶部光学取景遥测 HUD */}
+        <div className="relative z-30 flex flex-wrap items-center justify-between gap-2 pb-1 text-[11px] font-mono">
+          <div
+            className={`flex items-center gap-2 ${isLightStage ? 'text-fg/65' : 'text-white/55'}`}
+          >
+            <span className="uppercase tracking-wider">
+              {sizeMm.w}×{sizeMm.h}MM · {resolvedQuality.toUpperCase()}
+            </span>
+            <span className="hidden md:inline">·</span>
+            <span className="hidden md:inline font-sans">{t('ticket.hint')}</span>
+          </div>
+
+          <div className="flex items-center gap-2.5">
+            <span
+              className={`px-2 py-0.5 rounded-full text-[10px] tracking-wider ${
+                isLightStage ? 'bg-black/[0.06] text-fg/80' : 'bg-white/[0.1] text-white/80'
+              }`}
+            >
+              {flipped ? t('ticket.reverse') : t('ticket.obverse')}
+            </span>
+
+            {/* 三档舞台背景色卡切换 */}
+            <div
+              className={`inline-flex items-center gap-1 rounded-full p-1 ${
+                isLightStage ? 'bg-black/[0.06]' : 'bg-white/[0.1]'
+              }`}
+            >
+              {backdropOptions.map((opt) => {
+                const active = stageBackdrop === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => {
+                      playDetentClick(0.75);
+                      setStageBackdrop(opt.id);
+                    }}
+                    title={t(`ticket.backdrop.${opt.id}`)}
+                    aria-label={t(`ticket.backdrop.${opt.id}`)}
+                    className={`w-4 h-4 rounded-full transition-transform cursor-pointer ${
+                      active ? 'scale-110 ring-2 ring-accent' : 'opacity-70 hover:opacity-100'
+                    }`}
+                    style={{ backgroundColor: opt.swatch }}
+                  />
+                );
+              })}
+            </div>
+          </div>
         </div>
 
-        <section
-          id="mogiri-stage-slot"
-          className="w-full h-[240px] sm:h-[380px] lg:h-[440px]"
-          aria-label={ticket.title}
-        />
+        {/* 四角光学准星 + WebGL 宿主槽位（移动端增高至 330px，令竖排长票完整舒展） */}
+        <div className="relative my-1">
+          <span
+            aria-hidden="true"
+            className={`pointer-events-none absolute top-2 left-2 font-mono text-xs ${
+              isLightStage ? 'text-black/25' : 'text-white/25'
+            }`}
+          >
+            ⌜
+          </span>
+          <span
+            aria-hidden="true"
+            className={`pointer-events-none absolute top-2 right-2 font-mono text-xs ${
+              isLightStage ? 'text-black/25' : 'text-white/25'
+            }`}
+          >
+            ⌝
+          </span>
+          <span
+            aria-hidden="true"
+            className={`pointer-events-none absolute bottom-2 left-2 font-mono text-xs ${
+              isLightStage ? 'text-black/25' : 'text-white/25'
+            }`}
+          >
+            ⌞
+          </span>
+          <span
+            aria-hidden="true"
+            className={`pointer-events-none absolute bottom-2 right-2 font-mono text-xs ${
+              isLightStage ? 'text-black/25' : 'text-white/25'
+            }`}
+          >
+            ⌟
+          </span>
 
-        {/* 悬浮毛玻璃工具坞 */}
-        <div className="mt-2 rounded-2xl bg-white/[0.08] backdrop-blur-md border border-white/[0.1] px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-3">
+          <section
+            id="mogiri-stage-slot"
+            className="w-full h-[248px] sm:h-[328px] lg:h-[358px]"
+            aria-label={ticket.title}
+          />
+        </div>
+
+        {/* 底部悬浮暗房物理交互操作台 */}
+        <div
+          className={`relative z-30 mt-2 rounded-2xl backdrop-blur-md border px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-3 ${
+            isLightStage
+              ? 'bg-white/70 border-black/[0.08] text-fg'
+              : 'bg-white/[0.08] border-white/[0.11] text-white'
+          }`}
+        >
           <div className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
-              onClick={() => setFlipped((f) => !f)}
-              className="h-8 rounded-full bg-white/12 hover:bg-white/22 px-3.5 text-[12px] font-medium text-white transition-colors cursor-pointer"
+              onClick={() => {
+                playPaperFlip();
+                setFlipped((f) => !f);
+              }}
+              className={`h-8 rounded-full px-3.5 text-[12px] font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer ${
+                isLightStage
+                  ? 'bg-black/[0.07] hover:bg-black/[0.13] text-fg'
+                  : 'bg-white/14 hover:bg-white/24 text-white'
+              }`}
             >
-              {t('ticket.flip')}
+              <span>↻</span>
+              <span>{t('ticket.flip')}</span>
             </button>
 
             {hasStub && (
               <button
                 type="button"
                 onClick={handleToggleStub}
-                className={`h-8 rounded-full px-3.5 text-[12px] font-medium transition-colors cursor-pointer ${
+                className={`h-8 rounded-full px-3.5 text-[12px] font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer ${
                   ticket.wear.torn
-                    ? 'bg-white/12 hover:bg-white/22 text-white'
-                    : 'bg-accent text-white hover:opacity-90'
+                    ? isLightStage
+                      ? 'bg-black/[0.07] hover:bg-black/[0.13] text-fg'
+                      : 'bg-white/14 hover:bg-white/24 text-white'
+                    : 'bg-accent text-white hover:opacity-90 shadow-xs'
                 }`}
               >
-                {ticket.wear.torn ? t('ticket.restore') : t('ticket.tear')}
+                <span>✂</span>
+                <span>{ticket.wear.torn ? t('ticket.restore') : t('ticket.tear')}</span>
               </button>
             )}
 
             <button
               type="button"
               onClick={handlePunchHole}
-              className="h-8 rounded-full bg-white/12 hover:bg-white/22 px-3.5 text-[12px] font-medium text-white transition-colors cursor-pointer"
+              className={`h-8 rounded-full px-3.5 text-[12px] font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer ${
+                isLightStage
+                  ? 'bg-black/[0.07] hover:bg-black/[0.13] text-fg'
+                  : 'bg-white/14 hover:bg-white/24 text-white'
+              }`}
             >
-              {t('ticket.punch')}
+              <span>◉</span>
+              <span>{t('ticket.punch')}</span>
             </button>
 
             {ticket.wear.punches.length > 0 && (
               <button
                 type="button"
                 onClick={handleClearPunches}
-                className="h-8 rounded-full bg-white/8 hover:bg-white/16 px-3 text-[12px] text-white/75 transition-colors cursor-pointer"
+                className={`h-8 rounded-full px-3 text-[12px] transition-colors cursor-pointer ${
+                  isLightStage
+                    ? 'bg-black/[0.05] hover:bg-black/[0.1] text-muted'
+                    : 'bg-white/8 hover:bg-white/16 text-white/75'
+                }`}
               >
                 {t('ticket.clearPunches')} ({ticket.wear.punches.length})
               </button>
@@ -401,14 +779,20 @@ export function TicketDetailView({ id }: { id: string }) {
             <button
               type="button"
               onClick={() => void requestMotionPermission()}
-              className="sm:hidden h-8 rounded-full bg-white/8 hover:bg-white/16 px-3 text-[12px] text-white/75 transition-colors cursor-pointer"
+              className={`sm:hidden h-8 rounded-full px-3 text-[12px] transition-colors cursor-pointer ${
+                isLightStage
+                  ? 'bg-black/[0.05] hover:bg-black/[0.1] text-muted'
+                  : 'bg-white/8 hover:bg-white/16 text-white/75'
+              }`}
             >
               {t('ticket.gyro')}
             </button>
           </div>
 
           <div className="flex items-center gap-2.5 min-w-[180px]">
-            <span className="text-[11.5px] text-white/65">{t('ticket.age')}</span>
+            <span className={`text-[11.5px] ${isLightStage ? 'text-muted' : 'text-white/70'}`}>
+              {t('ticket.age')}
+            </span>
             <input
               type="range"
               min={0}
@@ -419,23 +803,52 @@ export function TicketDetailView({ id }: { id: string }) {
               className="range w-24"
               aria-label={t('ticket.age')}
             />
-            <span className="font-mono text-[11px] text-white/70 w-8 text-right">
+            <span
+              className={`font-mono text-[11px] w-9 text-right tabular-nums ${
+                isLightStage ? 'text-fg/75' : 'text-white/75'
+              }`}
+            >
               {Math.round(ticket.wear.age * 100)}%
             </span>
           </div>
         </div>
       </div>
 
-      {/* 4. 双栏详情 Bento 卡片 */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-        {/* 左卡片：票面规格 */}
-        <div className="lg:col-span-5 rounded-[20px] bg-bg-raised border border-line p-6 space-y-4">
-          <SectionHead title={t('form.s2')} />
+      {/* 4. 双栏馆藏档案卡（左：博物馆入藏规格表 · 右：典藏衬线手记与现场底片接触印相） */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+        {/* 左栏：博物馆入藏规格表 */}
+        <div className="lg:col-span-5 rounded-[22px] archival-card p-6 space-y-5">
+          <SectionHead index="01" title={t('form.s2')} />
+
+          {/* 席位与面值双联高亮读数 */}
+          {(ticket.seat || ticket.priceAmount !== undefined) && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-2xl recessed-plinth p-3.5">
+                <div className="label">{t('ticket.specSeat')}</div>
+                <div className="font-mono text-[15px] font-semibold text-fg mt-1 truncate">
+                  {ticket.seat || '—'}
+                </div>
+              </div>
+              <div className="rounded-2xl recessed-plinth p-3.5">
+                <div className="label">{t('ticket.specPrice')}</div>
+                <div className="font-mono text-[15px] font-semibold text-fg mt-1 tabular-nums">
+                  {ticket.priceAmount !== undefined
+                    ? `${ticket.priceCurrency ?? 'JPY'} ${ticket.priceAmount.toLocaleString()}`
+                    : 'ADMIT ONE'}
+                </div>
+              </div>
+            </div>
+          )}
+
           <dl className="divide-y divide-line">
             {specRows.map((row) => (
               <div key={row.label} className="py-2.5 flex items-baseline justify-between gap-4">
                 <dt className="text-[12.5px] text-muted shrink-0">{row.label}</dt>
-                <dd className="text-[13px] font-medium text-fg text-right break-words">
+                <dd
+                  className={`text-[13px] font-medium text-fg text-right break-words ${
+                    row.mono ? 'font-mono text-[12px] tabular-nums' : ''
+                  }`}
+                >
                   {row.value}
                 </dd>
               </div>
@@ -443,10 +856,11 @@ export function TicketDetailView({ id }: { id: string }) {
           </dl>
         </div>
 
-        {/* 右卡片：当日记忆与照片 */}
+        {/* 右栏：散场手记与底片接触印相 */}
         <div className="lg:col-span-7 space-y-5">
-          <div className="rounded-[20px] bg-bg-raised border border-line p-6 space-y-4">
+          <div className="rounded-[22px] archival-card p-6 space-y-4">
             <SectionHead
+              index="02"
               title={t('ticket.memory')}
               aside={
                 ticket.rating !== undefined ? (
@@ -455,9 +869,15 @@ export function TicketDetailView({ id }: { id: string }) {
               }
             />
 
-            <p className="text-[16px] leading-relaxed text-fg whitespace-pre-wrap">
-              {ticket.note || <span className="text-muted">{t('ticket.noNote')}</span>}
-            </p>
+            {ticket.note ? (
+              <blockquote className="relative pl-4 border-l-2 border-accent/60 py-0.5">
+                <p className="font-editorial text-[19px] sm:text-[21px] leading-[1.65] text-fg whitespace-pre-wrap">
+                  {ticket.note}
+                </p>
+              </blockquote>
+            ) : (
+              <p className="text-[14px] leading-relaxed text-muted">{t('ticket.noNote')}</p>
+            )}
 
             {(ticket.companions.length > 0 || ticket.tags.length > 0) && (
               <div className="flex flex-wrap items-center gap-4 pt-3 border-t border-line">
@@ -478,11 +898,11 @@ export function TicketDetailView({ id }: { id: string }) {
                 )}
 
                 {ticket.tags.length > 0 && (
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
                     {ticket.tags.map((tg) => (
                       <span
                         key={tg}
-                        className="rounded-full bg-bg-subtle px-2.5 py-0.5 text-[12px] text-muted"
+                        className="rounded-full recessed-plinth px-2.5 py-0.5 font-mono text-[11px] text-muted"
                       >
                         #{tg}
                       </span>
@@ -493,12 +913,15 @@ export function TicketDetailView({ id }: { id: string }) {
             )}
           </div>
 
-          {/* 现场照片卡片 */}
-          <div className="rounded-[20px] bg-bg-raised border border-line p-6 space-y-4">
+          {/* 现场照片底片接触印相夹 */}
+          <div className="rounded-[22px] archival-card p-6 space-y-4">
             <SectionHead
+              index="03"
               title={`${t('ticket.photos')} (${mediaList.length})`}
               aside={
-                <label className={`${btnClass('pill')} cursor-pointer`}>
+                <label
+                  className={`${btnClass('outline', 'h-8 px-3.5 text-[12px]')} cursor-pointer`}
+                >
                   <span>+ {t('ticket.addPhoto')}</span>
                   <input
                     type="file"
@@ -512,18 +935,41 @@ export function TicketDetailView({ id }: { id: string }) {
             />
 
             {mediaList.length === 0 ? (
-              <p className="rounded-xl bg-bg-subtle/60 py-10 text-center text-[13px] text-muted">
-                {t('ticket.noPhotos')}
-              </p>
+              <label className="rounded-2xl recessed-plinth py-9 px-6 flex flex-col items-center justify-center text-center gap-2 cursor-pointer hover:bg-black/[0.03] transition-colors">
+                <div className="flex items-center gap-2 text-muted/60 font-mono text-[10.5px] tracking-widest">
+                  <span>[ 01A ]</span>
+                  <span>·</span>
+                  <span>[ 02A ]</span>
+                  <span>·</span>
+                  <span>[ 03A ]</span>
+                </div>
+                <p className="text-[13.5px] font-medium text-fg/85 max-w-md">
+                  {t('ticket.noPhotos')}
+                </p>
+                <span className="text-[11.5px] text-muted">{t('ticket.noPhotosHint')}</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={(e) => void handlePhotoUpload(e)}
+                  className="hidden"
+                />
+              </label>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {mediaList.map((m, idx) => (
-                  <div key={m.id} className="rounded-xl bg-bg-subtle/60 p-3 space-y-2.5">
+                  <div key={m.id} className="rounded-2xl recessed-plinth p-3 space-y-2.5">
+                    <div className="flex items-center justify-between font-mono text-[10px] text-muted px-0.5">
+                      <span>FRAME {String(idx + 1).padStart(2, '0')}A</span>
+                      <span>
+                        {m.width}×{m.height}
+                      </span>
+                    </div>
                     {m.dataUrl && (
                       <button
                         type="button"
                         onClick={() => setLightboxMedia(m)}
-                        className="block w-full aspect-[4/3] overflow-hidden rounded-lg bg-bg group cursor-pointer"
+                        className="block w-full aspect-[4/3] overflow-hidden rounded-xl bg-bg group cursor-pointer"
                       >
                         <img
                           src={m.dataUrl}
@@ -575,7 +1021,113 @@ export function TicketDetailView({ id }: { id: string }) {
         </div>
       </div>
 
-      {/* 全屏灯箱 */}
+      {/* 5. 珍藏海报冲印工作室弹窗（SHARE-01 & SHARE-03） */}
+      {posterOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('ticket.poster.title')}
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4 sm:p-6"
+        >
+          <button
+            type="button"
+            aria-label={t('ticket.poster.close')}
+            onClick={() => setPosterOpen(false)}
+            className="absolute inset-0 cursor-default"
+          />
+          <div className="relative z-10 w-full max-w-[780px] rounded-[26px] archival-card p-5 sm:p-7 space-y-5 max-h-[92vh] overflow-y-auto">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-[19px] font-semibold tracking-[-0.02em] text-fg">
+                  {t('ticket.poster.title')}
+                </h2>
+                <p className="text-[12.5px] text-muted mt-0.5">{t('ticket.poster.subtitle')}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPosterOpen(false)}
+                className="w-8 h-8 rounded-full bg-bg-subtle hover:bg-black/15 text-fg flex items-center justify-center cursor-pointer"
+              >
+                ×
+              </button>
+            </div>
+
+            {/* 实时冲印预览框 */}
+            <div className="rounded-2xl recessed-plinth p-3 sm:p-4 flex items-center justify-center">
+              {posterPreviewUrl && (
+                <img
+                  src={posterPreviewUrl}
+                  alt={ticket.title}
+                  className="w-full h-auto max-h-[46vh] object-contain rounded-xl shadow-md"
+                />
+              )}
+            </div>
+
+            {/* 装裱版式与隐私打码控制 */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+              <div className="space-y-1.5">
+                <div className="label">{t('ticket.poster.edition')}</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {(
+                    [
+                      { id: 'obsidian', label: t('ticket.poster.themeObsidian') },
+                      { id: 'ivory', label: t('ticket.poster.themeIvory') },
+                      { id: 'vermilion', label: t('ticket.poster.themeVermilion') },
+                    ] as const
+                  ).map((ed) => (
+                    <button
+                      key={ed.id}
+                      type="button"
+                      onClick={() => {
+                        playDetentClick(0.75);
+                        setPosterEdition(ed.id);
+                      }}
+                      className={`h-8 px-3.5 rounded-full text-[12px] font-medium transition-colors cursor-pointer ${
+                        posterEdition === ed.id
+                          ? 'bg-fg text-bg-raised'
+                          : 'bg-bg-subtle text-muted hover:text-fg'
+                      }`}
+                    >
+                      {ed.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <label className="rounded-2xl recessed-plinth p-3.5 flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={redactPrivacy}
+                  onChange={(e) => {
+                    playDetentClick(0.75);
+                    setRedactPrivacy(e.target.checked);
+                  }}
+                  className="mt-0.5 accent-[#d64c35] w-4 h-4"
+                />
+                <div className="min-w-0">
+                  <div className="text-[12.5px] font-semibold text-fg">
+                    {t('ticket.poster.redact')}
+                  </div>
+                  <div className="text-[11px] text-muted leading-snug mt-0.5">
+                    {t('ticket.poster.redactHint')}
+                  </div>
+                </div>
+              </label>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-line">
+              <Btn variant="pill" onClick={() => setPosterOpen(false)}>
+                {t('ticket.poster.close')}
+              </Btn>
+              <Btn variant="solid" arrow onClick={() => void handleDownloadPoster()}>
+                {t('ticket.poster.download')}
+              </Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 6. 现场原片全屏灯箱 */}
       {lightboxMedia?.dataUrl && (
         <div
           role="dialog"

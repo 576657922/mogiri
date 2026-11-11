@@ -31,6 +31,8 @@ async function bootstrap() {
     await ensureSeedTickets();
   } catch (err) {
     console.error('BOOTSTRAP_ERROR:', err);
+  } finally {
+    useUiStore.getState().setBootstrapped(true);
   }
 }
 

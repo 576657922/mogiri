@@ -7,8 +7,24 @@ import type React from 'react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { db, type TicketRecord } from '../../data';
-import { filterTickets, formatEventDateDisplay, toTicketSpec } from '../../domain';
-import { btnClass, RatingDots, ticketTypeCode, useUiStore } from '../../ui';
+import {
+  daysUntilEvent,
+  filterTickets,
+  formatEventDateDisplay,
+  isUpcomingEvent,
+  toTicketSpec,
+} from '../../domain';
+import { playDetentClick, playPaperFlip } from '../../platform';
+import {
+  btnClass,
+  getTicketTypeTheme,
+  MATERIAL_SWATCH_BG,
+  RatingDots,
+  stubTilt,
+  TICKET_TYPE_THEMES,
+  ticketTypeCode,
+  useUiStore,
+} from '../../ui';
 
 const MONTH_ABBR = [
   'JAN',
@@ -24,76 +40,6 @@ const MONTH_ABBR = [
   'NOV',
   'DEC',
 ] as const;
-
-/**
- * 语义化博朗/瑞士档案工业色系：按票种（TicketType）赋予每张票根恒定的专属顶栏色彩身份
- * - 演出 concert：博朗信号朱红（Vermilion）
- * - 列车 train：JR 新干线磁气钴蓝（Cobalt Blue）
- * - 机票 flight：航空琥珀金（Aviation Amber）
- * - 电影 movie：胶片粉青（35mm Cine Teal）
- * - 戏剧 theater：包豪斯炭黑与帝国暖金（Charcoal & Buff）
- * - 展览 exhibition：美术馆青瓷灰（Celadon）
- * - 赛事 sports：赛场墨绿（Racing Green）
- * - 其他 other：档案暖石（Archival Stone）
- */
-const TICKET_TYPE_THEMES: Record<
-  TicketType,
-  {
-    rim: string;
-    tabBg: string;
-    tabInk: string;
-    subInk: string;
-  }
-> = {
-  concert: {
-    rim: '#d64c35',
-    tabBg: '#e7dfd3',
-    tabInk: '#141413',
-    subInk: '#4a463f',
-  },
-  train: {
-    rim: '#28609c',
-    tabBg: '#3973b2',
-    tabInk: '#f7f7f3',
-    subInk: 'rgba(247,247,243,0.82)',
-  },
-  flight: {
-    rim: '#d67824',
-    tabBg: '#e1cf76',
-    tabInk: '#141413',
-    subInk: '#474126',
-  },
-  movie: {
-    rim: '#699fb0',
-    tabBg: '#9ac5d2',
-    tabInk: '#141413',
-    subInk: '#2c464f',
-  },
-  theater: {
-    rim: '#222220',
-    tabBg: '#dcd69c',
-    tabInk: '#141413',
-    subInk: '#45432e',
-  },
-  exhibition: {
-    rim: '#566658',
-    tabBg: '#cbd5cc',
-    tabInk: '#141413',
-    subInk: '#384239',
-  },
-  sports: {
-    rim: '#266348',
-    tabBg: '#b7d4c5',
-    tabInk: '#141413',
-    subInk: '#254737',
-  },
-  other: {
-    rim: '#7d7970',
-    tabBg: '#e2dfd7',
-    tabInk: '#141413',
-    subInk: '#4a4842',
-  },
-};
 
 /**
  * 生成稳定的伪随机一维条码竖线宽度序列与数字串
@@ -156,7 +102,6 @@ function buildTicketClipPath(): string {
   parts.push(`A ${stubR} ${stubR} 0 0 0 ${stubX + stubR} 0`);
   parts.push(`L ${W - 3} 0`);
 
-  // 右侧细锯齿边缘
   const teeth = 22;
   const stepY = H / teeth;
   for (let i = 0; i < teeth; i++) {
@@ -165,12 +110,10 @@ function buildTicketClipPath(): string {
     parts.push(`L ${W} ${yMid.toFixed(1)} L ${W - 3} ${yEnd.toFixed(1)}`);
   }
 
-  // 底边 + 副券下缺口
   parts.push(`L ${stubX + stubR} ${H}`);
   parts.push(`A ${stubR} ${stubR} 0 0 0 ${stubX - stubR} ${H}`);
   parts.push(`L 3 ${H}`);
 
-  // 左侧细锯齿边缘 + 中央半圆缺口
   for (let i = teeth - 1; i >= 0; i--) {
     const yStart = (i + 1) * stepY;
     const yMid = i * stepY + stepY * 0.5;
@@ -193,9 +136,7 @@ function buildTicketClipPath(): string {
 const TICKET_CLIP_PATH = buildTicketClipPath();
 
 /**
- * 计算任意连续景深 relDepth (-1..6) 的三维光学投影姿态（纯数学函数，供 60fps 直接 DOM 引擎调用）：
- * - relDepth >= 0：沿透视递减阶梯排布（每层露出顶部 26px 档案索引标签）
- * - relDepth < 0：前排票根保持 100% 实体不透明卡纸质感沿垂直中轴滑落，清晰显露后卡标题，仅在末段柔和消隐
+ * 计算任意连续景深 relDepth (-1..6) 的三维光学投影姿态（纯数学函数，供 60fps 直接 DOM 引擎调用）
  */
 function computeCardStagePose(relDepth: number): {
   yPx: number;
@@ -226,37 +167,36 @@ function computeCardStagePose(relDepth: number): {
 }
 
 /**
- * 模切活版印刷实体票根组件（React.memo 静态化：滚动动画期间零重绘，完全由外层 GPU 图层合成位移）
- * - 顶部 y=0..32 为按票种（TicketType）着色的档案索引耳标（完整显示「序号 · 日期 · 标题」与「票种 · 票价」，后方叠放时绝不裁切文字）
- * - 主体 y=32..268 为 350g 棉浆象牙白活版纸面（含暖调纸感渐变、内凹压印边框与十字套准线）
+ * 模切活版印刷实体票根组件（React.memo 静态化：滚动动画期间零重绘）
  */
 const DieCutTicketCard = memo(function DieCutTicketCard({
   ticket,
   catalogNo,
   language,
   typeLabel,
+  inspectLabel,
 }: {
   ticket: TicketRecord;
   catalogNo: string;
   language: string;
   typeLabel: string;
+  inspectLabel: string;
 }) {
-  const theme = TICKET_TYPE_THEMES[ticket.type] ?? TICKET_TYPE_THEMES.other;
+  const theme = getTicketTypeTheme(ticket.type);
   const barcode = useMemo(() => buildBarcodeSpec(ticket.id), [ticket.id]);
 
   const priceDisplay =
     ticket.priceAmount !== undefined
       ? ticket.priceCurrency === 'USD'
         ? `$${ticket.priceAmount.toLocaleString()}`
-        : ticket.priceCurrency === 'CNY'
-          ? `¥${ticket.priceAmount.toLocaleString()}`
-          : `¥${ticket.priceAmount.toLocaleString()}`
+        : `¥${ticket.priceAmount.toLocaleString()}`
       : 'ADMIT ONE';
 
   const shortDate = ticket.eventAt.slice(0, 10).replace(/-/g, '.');
   const tabTitle = ticket.title.length > 20 ? `${ticket.title.slice(0, 20)}…` : ticket.title;
   const clipId = `tk-clip-${ticket.id}`;
   const paperGradId = `tk-paper-${ticket.id}`;
+  const isTorn = ticket.wear.torn;
 
   return (
     <svg
@@ -269,10 +209,10 @@ const DieCutTicketCard = memo(function DieCutTicketCard({
         <clipPath id={clipId}>
           <path d={TICKET_CLIP_PATH} />
         </clipPath>
-        <linearGradient id={paperGradId} x1="0" y1="0" x2="0.15" y2="1">
-          <stop offset="0%" stopColor="#f5f4ef" />
-          <stop offset="55%" stopColor="#f1f0ea" />
-          <stop offset="100%" stopColor="#eae8e0" />
+        <linearGradient id={paperGradId} x1="0" y1="0" x2="0.18" y2="1">
+          <stop offset="0%" stopColor="#f8f7f2" />
+          <stop offset="55%" stopColor="#f2f1eb" />
+          <stop offset="100%" stopColor="#eae8df" />
         </linearGradient>
       </defs>
 
@@ -280,19 +220,15 @@ const DieCutTicketCard = memo(function DieCutTicketCard({
         {/* 底层 350g 象牙白活版棉纸 */}
         <rect x="0" y="0" width="540" height="268" fill={`url(#${paperGradId})`} />
 
-        {/* 顶部 32px 档案索引耳标（按票种语义着色，后方叠卡露出顶部 26px 时完整呈现档案摘要，前移落位时自然作为主卡顶栏） */}
+        {/* 顶部 32px 档案索引耳标 */}
         <rect x="0" y="0" width="540" height="32" fill={theme.tabBg} />
-        {/* 顶部 3.5px 饱和原色模切封边 */}
         <rect x="0" y="0" width="540" height="3.5" fill={theme.rim} />
-        {/* 左右两侧顶栏包边角 */}
         <rect x="0" y="0" width="5" height="32" fill={theme.rim} />
         <rect x="535" y="0" width="5" height="32" fill={theme.rim} />
 
-        {/* 顶栏与象牙白纸面之间的活版压痕分隔线 */}
+        {/* 活版压痕分隔线 */}
         <line x1="0" y1="32" x2="540" y2="32" stroke="rgba(20,20,19,0.14)" strokeWidth="1" />
-        <line x1="0" y1="33" x2="540" y2="33" stroke="rgba(255,255,255,0.7)" strokeWidth="1" />
-
-        {/* 顶部微高光 */}
+        <line x1="0" y1="33" x2="540" y2="33" stroke="rgba(255,255,255,0.75)" strokeWidth="1" />
         <line
           x1="0"
           y1="0.75"
@@ -302,7 +238,7 @@ const DieCutTicketCard = memo(function DieCutTicketCard({
           strokeWidth="1.2"
         />
 
-        {/* 档案索引耳标文字（垂直居中于 y=19.5，在后方叠卡露出区 100% 完整可读，序号日期与标题之间留有清晰瑞士网格间距） */}
+        {/* 档案索引耳标文字 */}
         <text
           x="22"
           y="20"
@@ -358,7 +294,7 @@ const DieCutTicketCard = memo(function DieCutTicketCard({
           BK #{catalogNo}
         </text>
 
-        {/* 主券活版压印内框线（Letterpress Deboss Frame）与四角微套准十字 */}
+        {/* 主券活版压印内框线与四角微套准十字 */}
         <rect
           x="18"
           y="44"
@@ -366,12 +302,12 @@ const DieCutTicketCard = memo(function DieCutTicketCard({
           height="208"
           rx="2"
           fill="none"
-          stroke="rgba(20,20,19,0.075)"
+          stroke="rgba(20,20,19,0.08)"
           strokeWidth="1"
         />
         <path
           d="M 24 50 h 5 M 26.5 47.5 v 5 M 383 50 h 5 M 385.5 47.5 v 5 M 24 246 h 5 M 26.5 243.5 v 5 M 383 246 h 5 M 385.5 243.5 v 5"
-          stroke="rgba(20,20,19,0.18)"
+          stroke="rgba(20,20,19,0.2)"
           strokeWidth="0.8"
         />
 
@@ -388,7 +324,7 @@ const DieCutTicketCard = memo(function DieCutTicketCard({
         />
 
         {/* 票面左上角分类与场馆小标 */}
-        <circle cx="34" cy="65" r="3" fill={theme.rim} />
+        <circle cx="34" cy="65" r="3.2" fill={theme.rim} />
         <text
           x="43"
           y="68.5"
@@ -486,34 +422,36 @@ const DieCutTicketCard = memo(function DieCutTicketCard({
           </text>
         </g>
 
-        {/* 主券右下角：显式 3D 检视印章外观（视觉引导明确，配合外层 Link 锚点） */}
-        <g transform="translate(284, 198)">
+        {/* 主券右下角：显式 3D 光学检视印章徽标（朱红指示点 + 本地化文案） */}
+        <g transform="translate(274, 198)">
           <rect
             x="0"
             y="0"
-            width="98"
+            width="108"
             height="32"
             rx="16"
-            fill="rgba(20,20,19,0.045)"
-            stroke="rgba(20,20,19,0.18)"
+            fill="#191918"
+            fillOpacity="0.06"
+            stroke="rgba(20,20,19,0.22)"
             strokeWidth="1"
           />
+          <circle cx="16" cy="16" r="3" fill="#d64c35" />
           <text
-            x="49"
+            x="60"
             y="19.5"
             textAnchor="middle"
-            fill="#191918"
+            fill="#141413"
             fontSize="10.5"
             fontWeight="600"
-            fontFamily="JetBrains Mono Variable, PingFang SC, sans-serif"
+            fontFamily="JetBrains Mono Variable, PingFang SC, Hiragino Sans, sans-serif"
             letterSpacing="0.02em"
           >
-            3D 检视 ↗
+            {inspectLabel}
           </text>
         </g>
 
-        {/* 右侧副券纵向条码 */}
-        <g transform="translate(442, 46)">
+        {/* 右侧副券纵向条码（若已撕副券则呈现半透明已检票残影） */}
+        <g transform="translate(442, 46)" opacity={isTorn ? 0.25 : 1}>
           {barcode.vBars.map((bar) => (
             <rect
               key={`vb-${bar.y.toFixed(2)}`}
@@ -537,13 +475,40 @@ const DieCutTicketCard = memo(function DieCutTicketCard({
             {barcode.stubDigits}
           </text>
         </g>
+
+        {isTorn && (
+          <g transform="translate(476, 148) rotate(-90)">
+            <rect
+              x="-38"
+              y="-10"
+              width="76"
+              height="20"
+              rx="3"
+              fill="none"
+              stroke="#d64c35"
+              strokeWidth="1.2"
+            />
+            <text
+              x="0"
+              y="3.5"
+              textAnchor="middle"
+              fill="#d64c35"
+              fontSize="9"
+              fontWeight="700"
+              fontFamily="JetBrains Mono Variable, monospace"
+              letterSpacing="0.1em"
+            >
+              DETACHED
+            </text>
+          </g>
+        )}
       </g>
     </svg>
   );
 });
 
 /**
- * 原彩缩略图卡片（供总览网格模式使用）
+ * 原彩缩略图卡片（供总览底片接触印相网格模式使用）
  */
 function TicketGraphicThumb({ ticket }: { ticket: TicketRecord }) {
   const thumb = useMemo(() => {
@@ -562,26 +527,37 @@ function TicketGraphicThumb({ ticket }: { ticket: TicketRecord }) {
   }, [ticket.id, ticket.thumbDataUrl, thumb]);
 
   if (!thumb) return null;
+  const deg = stubTilt(ticket.id, 1.35);
   return (
     <img
       src={thumb}
       alt={ticket.title}
       draggable={false}
-      className="w-full h-auto max-h-[200px] object-contain stub-shadow select-none"
+      style={{ transform: `rotate(${deg}deg)` }}
+      className="w-full h-auto max-h-[188px] object-contain stub-shadow select-none transition-transform duration-500 ease-out group-hover:rotate-0 group-hover:scale-[1.035]"
     />
   );
 }
 
 export function TimelineView() {
   const { t, i18n } = useTranslation();
+  const bootstrapped = useUiStore((s) => s.bootstrapped);
   const timelineView = useUiStore((s) => s.timelineView);
   const setTimelineView = useUiStore((s) => s.setTimelineView);
 
   const [typeFilter, setTypeFilter] = useState<TicketType | 'all'>('all');
   const [query, setQuery] = useState('');
-  // React 状态仅在整数索引切换时更新一次（用于顶部仪表读数），60fps 动画完全绕过 React 直接写 DOM
   const [activeIndex, setActiveIndex] = useState(0);
   const [showFilterBar, setShowFilterBar] = useState(false);
+
+  // 前排主卡指针微视差光泽状态
+  const [frontTilt, setFrontTilt] = useState<{
+    rx: number;
+    ry: number;
+    gx: number;
+    gy: number;
+    active: boolean;
+  }>({ rx: 0, ry: 0, gx: 50, gy: 50, active: false });
 
   const posRef = useRef(0);
   const velRef = useRef(0);
@@ -590,7 +566,6 @@ export function TimelineView() {
   const lastFrameTimeRef = useRef<number>(0);
   const activeIndexRef = useRef(0);
 
-  // 直接 DOM 引用集合（60fps 帧循环内零 React 调和开销）
   const cardElsRef = useRef<Map<number, HTMLDivElement>>(new Map());
   const rulerTicksGroupRef = useRef<SVGGElement | null>(null);
   const monthDrumGroupRef = useRef<SVGGElement | null>(null);
@@ -608,13 +583,13 @@ export function TimelineView() {
   const wheelSnapTimerRef = useRef<number | null>(null);
   const lastDiscreteWheelRef = useRef<number>(0);
 
-  const allActive = useLiveQuery(
+  const allActiveQuery = useLiveQuery(
     () => db.tickets.where('status').equals('active').toArray(),
     [],
-    [] as TicketRecord[],
   );
+  const allActive = allActiveQuery ?? [];
+  const isHydrating = !bootstrapped || allActiveQuery === undefined;
 
-  // 按时间倒序排列（最新活动在前排 index=0，向后依次为更早的归档票根）
   const sortedActive = useMemo(
     () => [...allActive].sort((a, b) => b.eventAt.localeCompare(a.eventAt)),
     [allActive],
@@ -636,16 +611,19 @@ export function TimelineView() {
   const activeTicket = filtered[clampedActiveIndex] ?? null;
 
   /**
-   * 60fps 直接 DOM 合成器更新：只写 style.transform / opacity / SVG transform，耗时 < 0.1ms
+   * 60fps 直接 DOM 合成器更新：只写 style.transform / opacity / SVG transform，并在越过整数卡槽时触发棘轮声效
    */
   const applyRolodexFrame = useCallback(
-    (pos: number) => {
+    (pos: number, silent = false) => {
       const maxIndex = Math.max(0, total - 1);
       const nearest = Math.max(0, Math.min(maxIndex, Math.round(pos)));
 
       if (nearest !== activeIndexRef.current) {
         activeIndexRef.current = nearest;
         setActiveIndex(nearest);
+        if (!silent) {
+          playDetentClick(0.95);
+        }
       }
 
       for (const [slotIdx, el] of cardElsRef.current.entries()) {
@@ -677,13 +655,11 @@ export function TimelineView() {
         el.setAttribute('data-slot-depth', String(Math.round(relDepth)));
       }
 
-      // 联动右侧毫米尺（单次修改 <g> transform，避免逐根修改 65 条 <line>）
       if (rulerTicksGroupRef.current) {
         const phaseY = (((pos * 24) % 16) + 16) % 16;
         rulerTicksGroupRef.current.setAttribute('transform', `translate(0, ${phaseY.toFixed(2)})`);
       }
 
-      // 联动右侧标准日历月份转鼓（DEC · NOV · OCT · SEP · AUG...，当前票所属月份精准对准 y=138 朱红指针线）
       if (monthDrumGroupRef.current && filtered.length > 0) {
         const clampedPos = Math.max(0, Math.min(maxIndex, pos));
         const lowIdx = Math.floor(clampedPos);
@@ -698,7 +674,6 @@ export function TimelineView() {
         monthDrumGroupRef.current.setAttribute('transform', `translate(0, ${drumY.toFixed(2)})`);
       }
 
-      // 联动金属滚花转轮纹理相位
       if (knurledWheelRef.current) {
         knurledWheelRef.current.style.backgroundPositionY = `${(pos * 28).toFixed(2)}px, 0px`;
       }
@@ -714,7 +689,6 @@ export function TimelineView() {
       const dt = Math.min(0.032, Math.max(0.004, (now - lastFrameTimeRef.current) / 1000));
       lastFrameTimeRef.current = now;
 
-      // 临界阻尼弹簧参数（stiffness=160, damping=25.2，快速顺滑且无多余震荡）
       const stiffness = 160;
       const damping = 25.2;
       const displacement = posRef.current - targetRef.current;
@@ -741,9 +715,8 @@ export function TimelineView() {
     rafRef.current = requestAnimationFrame(tick);
   }, [applyRolodexFrame]);
 
-  // 初始挂载或列表变化时同步一次 DOM 姿态
   useEffect(() => {
-    applyRolodexFrame(posRef.current);
+    applyRolodexFrame(posRef.current, true);
   }, [applyRolodexFrame]);
 
   useEffect(() => {
@@ -768,7 +741,7 @@ export function TimelineView() {
     targetRef.current = 0;
     activeIndexRef.current = 0;
     setActiveIndex(0);
-    applyRolodexFrame(0);
+    applyRolodexFrame(0, true);
   }, [applyRolodexFrame]);
 
   const jumpToIndex = useCallback(
@@ -786,7 +759,6 @@ export function TimelineView() {
       if (total <= 1 || delta === 0) return;
       const currentTarget = Math.round(targetRef.current);
       const rawNext = currentTarget + delta;
-      // 有限档案盒逻辑：抵达末尾后若继续点击翻页，平滑归位至首张（0），绝不在同一画面重复渲染同一张票
       const nextTarget =
         rawNext > total - 1 ? 0 : rawNext < 0 ? 0 : Math.max(0, Math.min(total - 1, rawNext));
       targetRef.current = nextTarget;
@@ -795,16 +767,15 @@ export function TimelineView() {
     [total, startSpringLoop],
   );
 
-  // 响应底部 Dock 再次点击首页图标切换 3D 叠卡 / 总览网格
   useEffect(() => {
     const onToggleView = () => {
+      playPaperFlip();
       setTimelineView(timelineView === 'stack' ? 'grid' : 'stack');
     };
     window.addEventListener('mogiri:toggle-home-view', onToggleView);
     return () => window.removeEventListener('mogiri:toggle-home-view', onToggleView);
   }, [timelineView, setTimelineView]);
 
-  // 键盘上下/左右方向键翻动叠卡
   useEffect(() => {
     if (timelineView !== 'stack') return;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -826,7 +797,6 @@ export function TimelineView() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [timelineView, stepBy]);
 
-  // 触控板与滚轮：支持连续增量累积 + 停顿后自动吸附至最近整数卡槽，消除惯性尾巴误翻
   const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
     if (total <= 1) return;
     const primary = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
@@ -847,7 +817,6 @@ export function TimelineView() {
       return;
     }
 
-    // 连续触控板滚动：按比例推进 target 并加边界橡皮筋阻尼，手势停止 130ms 后自动吸附至最近整数卡槽
     const maxIdx = total - 1;
     const deltaCursor = primary * 0.0038;
     const rawTarget = targetRef.current + deltaCursor;
@@ -870,7 +839,6 @@ export function TimelineView() {
     }, 130);
   };
 
-  // 上下拖拽手势（1:1 直接驱动 DOM，含首尾橡皮筋阻尼，松手后将动量移交弹簧引擎吸附）
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (total <= 1) return;
     if (rafRef.current !== null) {
@@ -940,7 +908,6 @@ export function TimelineView() {
     startSpringLoop();
   };
 
-  // 有限不重复叠卡列表（按从远到近排序挂载，确保每张真实票根只出现一次）
   const stackItems = useMemo(() => {
     const items: { slotIndex: number; ticket: TicketRecord; catalogNo: string }[] = [];
     for (let i = total - 1; i >= 0; i--) {
@@ -957,29 +924,42 @@ export function TimelineView() {
   }, [filtered, total]);
 
   const activeTheme = activeTicket
-    ? (TICKET_TYPE_THEMES[activeTicket.type] ?? TICKET_TYPE_THEMES.other)
+    ? getTicketTypeTheme(activeTicket.type)
     : TICKET_TYPE_THEMES.concert;
   const activeMonthNum = activeTicket ? Number(activeTicket.eventAt.slice(5, 7)) || 11 : 11;
+  const activeCatalogNo = activeTicket
+    ? String(total - clampedActiveIndex).padStart(3, '0')
+    : '001';
   const hasActiveFilters = typeFilter !== 'all' || query.trim() !== '';
+
+  const activeCountdown = useMemo(() => {
+    if (!activeTicket) return null;
+    if (!isUpcomingEvent(activeTicket.eventAt, activeTicket.eventTz)) return null;
+    const days = daysUntilEvent(activeTicket.eventAt, activeTicket.eventTz);
+    return days <= 0 ? t('home.today') : t('home.daysUntil', { days });
+  }, [activeTicket, t]);
 
   return (
     <div
       onWheel={timelineView === 'stack' ? handleWheel : undefined}
-      className="flex-1 flex flex-col justify-between px-4 sm:px-8 relative select-none overflow-visible"
+      className={`flex-1 flex flex-col ${
+        timelineView === 'stack' ? 'justify-center' : 'justify-start'
+      } px-4 sm:px-8 relative select-none overflow-visible`}
     >
-      {/* 总览网格模式下浮现的轻量筛选胶囊栏 */}
+      {/* 顶部模式与多维筛选控制条（总览模式下常驻，叠卡模式下可一键唤出） */}
       <AnimatePresence>
         {(timelineView === 'grid' || showFilterBar) && (
           <motion.div
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.2 }}
-            className="mx-auto mt-2 z-20 frosted-dock rounded-full px-3 py-1.5 flex flex-wrap items-center justify-center gap-1.5"
+            transition={{ duration: 0.22 }}
+            className="mx-auto mt-2 mb-3 z-30 frosted-dock rounded-2xl sm:rounded-full px-3 py-2 flex flex-wrap items-center justify-center gap-1.5 max-w-[1160px]"
           >
             <button
               type="button"
               onClick={() => {
+                playDetentClick(0.7);
                 setTypeFilter('all');
                 resetCursor();
               }}
@@ -989,21 +969,32 @@ export function TimelineView() {
             >
               {t('types.all')}
             </button>
-            {TICKET_TYPES.map((tp) => (
-              <button
-                key={tp}
-                type="button"
-                onClick={() => {
-                  setTypeFilter(tp);
-                  resetCursor();
-                }}
-                className={`h-7 rounded-full px-3 text-[12px] font-medium transition-colors cursor-pointer ${
-                  typeFilter === tp ? 'bg-fg text-bg-raised' : 'text-muted hover:text-fg'
-                }`}
-              >
-                {t(`types.${tp}`)}
-              </button>
-            ))}
+            {TICKET_TYPES.map((tp) => {
+              const active = typeFilter === tp;
+              const tpTheme = TICKET_TYPE_THEMES[tp];
+              return (
+                <button
+                  key={tp}
+                  type="button"
+                  onClick={() => {
+                    playDetentClick(0.7);
+                    setTypeFilter(tp);
+                    resetCursor();
+                  }}
+                  className={`h-7 rounded-full px-2.5 text-[12px] font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer ${
+                    active
+                      ? 'bg-fg text-bg-raised'
+                      : 'text-muted hover:text-fg hover:bg-black/[0.04]'
+                  }`}
+                >
+                  <span
+                    className="w-1.5 h-1.5 rounded-full shrink-0"
+                    style={{ backgroundColor: tpTheme.rim }}
+                  />
+                  <span>{t(`types.${tp}`)}</span>
+                </button>
+              );
+            })}
             <input
               type="search"
               value={query}
@@ -1013,27 +1004,42 @@ export function TimelineView() {
               }}
               placeholder={t('home.searchPlaceholder')}
               aria-label={t('home.searchPlaceholder')}
-              className="h-7 w-32 rounded-full bg-black/[0.05] px-3 text-[12px] text-fg placeholder:text-muted focus:bg-bg-raised focus:outline-none"
+              className="h-7 w-44 sm:w-52 rounded-full bg-black/[0.055] px-3 text-[12px] text-fg placeholder:text-muted focus:bg-bg-raised focus:outline-none"
             />
-            {timelineView === 'grid' && (
+            {timelineView === 'grid' ? (
               <button
                 type="button"
                 onClick={() => {
+                  playPaperFlip();
                   setTimelineView('stack');
                   setShowFilterBar(false);
                 }}
-                className="h-7 rounded-full bg-black/[0.06] hover:bg-black/[0.12] px-3 text-[12px] font-medium text-fg transition-colors cursor-pointer"
+                className="h-7 rounded-full bg-fg text-bg-raised hover:opacity-90 px-3 text-[12px] font-medium transition-opacity cursor-pointer"
               >
-                {t('home.viewTable')}
+                ← {t('home.viewTable')}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowFilterBar(false)}
+                aria-label="Close filter bar"
+                className="h-7 w-7 rounded-full bg-black/[0.06] hover:bg-black/[0.12] text-[12px] text-fg flex items-center justify-center cursor-pointer"
+              >
+                ×
               </button>
             )}
           </motion.div>
         )}
       </AnimatePresence>
 
-      {total === 0 ? (
+      {total === 0 && isHydrating ? (
+        <div className="flex-1" aria-busy="true" />
+      ) : total === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center py-20 text-center space-y-4">
-          <div className="text-[18px] font-semibold text-fg">
+          <div className="w-12 h-12 rounded-2xl recessed-plinth flex items-center justify-center font-mono text-muted text-sm">
+            00
+          </div>
+          <div className="text-[19px] font-semibold tracking-[-0.02em] text-fg">
             {hasActiveFilters ? t('home.emptyFiltered') : t('home.emptyTitle')}
           </div>
           <p className="text-[13px] text-muted max-w-sm">{t('home.emptyHint')}</p>
@@ -1058,34 +1064,40 @@ export function TimelineView() {
           </div>
         </div>
       ) : timelineView === 'stack' ? (
-        /* Concept C 主舞台：上方博朗精密仪表读数条 + 中央有限景深叠卡 + 右侧啮合机械滚轮 */
+        /* FWA 主舞台：上方博朗精密游标控制台 + 中央内凹归档底座叠卡 + 右侧啮合机械滚轮 + 下方馆藏检视铭牌 */
         <div
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerEnd}
           onPointerCancel={handlePointerEnd}
-          className="flex-1 flex flex-col items-center justify-center pb-6 pt-1 touch-none"
+          className="flex-1 flex flex-col items-center justify-center py-2 touch-none"
         >
-          {/* 顶部博朗仪器式档案读数栏（填补上方视觉留白，并在移动端与桌面端同步提供精准位置、月份与微调拨钮） */}
+          {/* 顶部博朗仪器式游标读数栏 */}
           {activeTicket && (
-            <div className="w-full max-w-[540px] mb-4 sm:mb-5 px-1 flex items-center justify-between gap-2 text-[11px] font-mono text-muted z-30 whitespace-nowrap">
-              <div className="flex items-center gap-2 shrink-0">
+            <div className="w-full max-w-[568px] mb-3 sm:mb-4 px-1 flex items-center justify-between gap-2 text-[11px] font-mono text-muted z-30 whitespace-nowrap">
+              <div className="flex items-center gap-2 min-w-0">
                 <span
-                  className="inline-block w-2 h-2 rounded-full shrink-0"
+                  className="inline-block w-2 h-2 rounded-full shrink-0 shadow-[0_0_0_2px_rgba(255,255,255,0.65)]"
                   style={{ backgroundColor: activeTheme.rim }}
                 />
-                <span className="font-semibold text-fg tracking-wider">
+                <span className="font-semibold text-fg tracking-wider tabular-nums">
                   {String(clampedActiveIndex + 1).padStart(2, '0')} /{' '}
                   {String(total).padStart(2, '0')}
                 </span>
                 <span className="text-black/20">·</span>
-                <span className="font-sans font-medium text-fg/85">
+                <span className="font-sans font-medium text-fg/85 shrink-0">
                   {t(`types.${activeTicket.type}`)}
                 </span>
+                {activeCountdown && (
+                  <span className="hidden md:inline-flex items-center gap-1 rounded-full bg-accent/12 text-accent px-2 py-0.5 text-[10px] font-semibold tracking-normal">
+                    <span className="w-1 h-1 rounded-full bg-accent" />
+                    {activeCountdown}
+                  </span>
+                )}
               </div>
 
-              {/* 中央可点击机械刻度槽（每张票对应一根精密游标刻度，红针指示当前前排票根） */}
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/[0.04] shrink-0">
+              {/* 中央可点击机械刻度槽 */}
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full recessed-plinth shrink-0">
                 {filtered.map((tk, idx) => {
                   const isCurrent = idx === clampedActiveIndex;
                   return (
@@ -1103,7 +1115,7 @@ export function TimelineView() {
                         className={`block rounded-full transition-all duration-200 ${
                           isCurrent
                             ? 'w-4 h-1.5 bg-[#d64c35]'
-                            : 'w-1.5 h-1.5 bg-black/22 hover:bg-black/45'
+                            : 'w-1.5 h-1.5 bg-black/22 hover:bg-black/48'
                         }`}
                       />
                     </button>
@@ -1111,14 +1123,41 @@ export function TimelineView() {
                 })}
               </div>
 
-              {/* 右侧日期/月份读数与上下微调拨钮（移动端显示月份缩写补齐右侧转轮信息，桌面端显示完整日期） */}
-              <div className="flex items-center gap-1.5 shrink-0">
-                <span className="sm:hidden tracking-wider font-semibold text-fg/80 mr-0.5">
-                  {MONTH_ABBR[activeMonthNum - 1] ?? 'NOV'}
-                </span>
-                <span className="hidden sm:inline tracking-tight text-fg/80 mr-1">
-                  {activeTicket.eventAt.slice(0, 10).replace(/-/g, '.')}
-                </span>
+              {/* 右侧：筛选唤出 + 总览切换 + 上下微调拨钮 */}
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    playDetentClick(0.7);
+                    setShowFilterBar((v) => !v);
+                  }}
+                  aria-label={t('home.viewFilter')}
+                  title={t('home.viewFilter')}
+                  className={`h-6 px-2 rounded-full text-[10.5px] font-sans font-medium flex items-center gap-1 transition-colors cursor-pointer ${
+                    showFilterBar || hasActiveFilters
+                      ? 'bg-fg text-bg-raised'
+                      : 'bg-black/[0.045] hover:bg-black/[0.10] text-fg/80'
+                  }`}
+                >
+                  {hasActiveFilters && <span className="w-1.5 h-1.5 rounded-full bg-accent" />}
+                  <span>{t('home.viewFilter')}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    playPaperFlip();
+                    setTimelineView('grid');
+                  }}
+                  aria-label={t('home.viewIndex')}
+                  title={t('home.viewIndex')}
+                  className="hidden sm:inline-flex h-6 px-2.5 rounded-full bg-black/[0.045] hover:bg-black/[0.10] text-[10.5px] font-sans font-medium text-fg/80 items-center transition-colors cursor-pointer"
+                >
+                  {t('home.viewIndex')}
+                </button>
+
                 <button
                   type="button"
                   onClick={(e) => {
@@ -1146,76 +1185,160 @@ export function TimelineView() {
           )}
 
           <div className="relative z-30 flex items-center justify-center w-full max-w-[940px]">
-            {/* 中央纵向景深卡槽（纯 GPU 合成层：零 filter 重绘，丝滑满帧 60fps） */}
-            <div className="relative w-full max-w-[540px] h-[340px] sm:h-[372px] flex items-end justify-center pb-1">
-              {stackItems.map(({ slotIndex, ticket, catalogNo }) => {
-                const initialRelDepth = slotIndex - posRef.current;
-                const initialPose = computeCardStagePose(initialRelDepth);
-                const initialZ = Math.round((20 - initialRelDepth) * 10);
-                const isInitialFront = slotIndex === clampedActiveIndex;
+            {/* 中央内凹检视卡槽底座（四角精密切削对位靶标 + 有限景深叠卡） */}
+            <div className="relative w-full max-w-[568px] px-3 sm:px-3.5 pt-5 pb-3 rounded-[26px] recessed-plinth">
+              {/* 四角精密切削十字对位标 */}
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute top-2.5 left-3 font-mono text-[10px] text-black/22 leading-none"
+              >
+                ⌜
+              </span>
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute top-2.5 right-3 font-mono text-[10px] text-black/22 leading-none"
+              >
+                ⌝
+              </span>
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute bottom-2 left-3 font-mono text-[10px] text-black/22 leading-none"
+              >
+                ⌞
+              </span>
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute bottom-2 right-3 font-mono text-[10px] text-black/22 leading-none"
+              >
+                ⌟
+              </span>
 
-                return (
-                  // biome-ignore lint/a11y/noStaticElementInteractions: 全局方向键与顶部仪表按钮已支持无障碍翻页与跳转
-                  // biome-ignore lint/a11y/useKeyWithClickEvents: 全局键盘方向键已监听翻票
-                  <div
-                    key={ticket.id}
-                    ref={(el) => {
-                      if (el) {
-                        cardElsRef.current.set(slotIndex, el);
-                      } else {
-                        cardElsRef.current.delete(slotIndex);
-                      }
-                    }}
-                    data-card-id={ticket.id}
-                    data-ticket-id={isInitialFront ? ticket.id : undefined}
-                    data-slot-depth={Math.round(initialRelDepth)}
-                    style={{
-                      zIndex: initialZ,
-                      transformOrigin: '50% 0%',
-                      transform: `translate3d(0px, ${initialPose.yPx.toFixed(2)}px, 0px) scale(${initialPose.scale.toFixed(4)})`,
-                      opacity: Number(initialPose.opacity.toFixed(4)),
-                      willChange: 'transform, opacity',
-                    }}
-                    onClick={() => {
-                      if (dragStartRef.current?.moved) return;
-                      const currentNearest = Math.round(posRef.current);
-                      if (slotIndex === currentNearest) {
-                        stepBy(1);
-                      } else if (slotIndex > currentNearest) {
-                        jumpToIndex(slotIndex);
-                      }
-                    }}
-                    className="absolute bottom-1 w-full cursor-pointer"
-                  >
-                    {/* 静态 GPU 九宫格阴影底衬（替代高开销的 SVG drop-shadow 滤镜，满帧 0ms 合成） */}
+              <div className="relative w-full max-w-[540px] mx-auto h-[332px] sm:h-[364px] flex items-end justify-center pb-1">
+                {stackItems.map(({ slotIndex, ticket, catalogNo }) => {
+                  const initialRelDepth = slotIndex - posRef.current;
+                  const initialPose = computeCardStagePose(initialRelDepth);
+                  const initialZ = Math.round((20 - initialRelDepth) * 10);
+                  const isFront = slotIndex === clampedActiveIndex;
+
+                  return (
+                    // biome-ignore lint/a11y/noStaticElementInteractions: 全局方向键与顶部仪表按钮已支持无障碍翻页与跳转
+                    // biome-ignore lint/a11y/useKeyWithClickEvents: 全局键盘方向键已监听翻票
                     <div
-                      aria-hidden="true"
-                      className="absolute inset-x-[5px] top-[5px] bottom-[3px] rounded-[5px] pointer-events-none"
-                      style={{
-                        boxShadow:
-                          '0 20px 30px -6px rgba(18, 17, 15, 0.16), 0 4px 10px -2px rgba(18, 17, 15, 0.08), 0 -2px 6px rgba(18, 17, 15, 0.08)',
+                      key={ticket.id}
+                      ref={(el) => {
+                        if (el) {
+                          cardElsRef.current.set(slotIndex, el);
+                        } else {
+                          cardElsRef.current.delete(slotIndex);
+                        }
                       }}
-                    />
+                      data-card-id={ticket.id}
+                      data-ticket-id={isFront ? ticket.id : undefined}
+                      data-slot-depth={Math.round(initialRelDepth)}
+                      style={{
+                        zIndex: initialZ,
+                        transformOrigin: '50% 0%',
+                        transform: `translate3d(0px, ${initialPose.yPx.toFixed(2)}px, 0px) scale(${initialPose.scale.toFixed(4)})`,
+                        opacity: Number(initialPose.opacity.toFixed(4)),
+                        willChange: 'transform, opacity',
+                      }}
+                      onClick={() => {
+                        if (dragStartRef.current?.moved) return;
+                        const currentNearest = Math.round(posRef.current);
+                        if (slotIndex === currentNearest) {
+                          stepBy(1);
+                        } else if (slotIndex > currentNearest) {
+                          jumpToIndex(slotIndex);
+                        }
+                      }}
+                      className="absolute bottom-1 w-full cursor-pointer"
+                    >
+                      {/* 内层纸张三维指针微倾角与柔光反光膜（仅作用于当前最前排票面，不干扰外层 60fps 弹簧位移） */}
+                      <div
+                        onPointerMove={
+                          isFront
+                            ? (e) => {
+                                if (dragStartRef.current) return;
+                                const r = e.currentTarget.getBoundingClientRect();
+                                const nx = (e.clientX - r.left) / Math.max(1, r.width);
+                                const ny = (e.clientY - r.top) / Math.max(1, r.height);
+                                setFrontTilt({
+                                  rx: (0.5 - ny) * 4.2,
+                                  ry: (nx - 0.5) * 5.2,
+                                  gx: nx * 100,
+                                  gy: ny * 100,
+                                  active: true,
+                                });
+                              }
+                            : undefined
+                        }
+                        onPointerLeave={
+                          isFront
+                            ? () =>
+                                setFrontTilt((prev) => ({ ...prev, rx: 0, ry: 0, active: false }))
+                            : undefined
+                        }
+                        style={
+                          isFront && frontTilt.active
+                            ? {
+                                transform: `perspective(1200px) rotateX(${frontTilt.rx.toFixed(2)}deg) rotateY(${frontTilt.ry.toFixed(2)}deg)`,
+                                transition: 'transform 140ms cubic-bezier(0.16, 1, 0.3, 1)',
+                              }
+                            : {
+                                transform: 'perspective(1200px) rotateX(0deg) rotateY(0deg)',
+                                transition: 'transform 360ms cubic-bezier(0.16, 1, 0.3, 1)',
+                              }
+                        }
+                        className="relative"
+                      >
+                        {/* 静态 GPU 阴影底衬 */}
+                        <div
+                          aria-hidden="true"
+                          className="absolute inset-x-[5px] top-[5px] bottom-[3px] rounded-[5px] pointer-events-none"
+                          style={{
+                            boxShadow:
+                              '0 22px 32px -6px rgba(18, 17, 15, 0.18), 0 4px 10px -2px rgba(18, 17, 15, 0.08), 0 -2px 6px rgba(18, 17, 15, 0.08)',
+                          }}
+                        />
 
-                    <DieCutTicketCard
-                      ticket={ticket}
-                      catalogNo={catalogNo}
-                      language={i18n.language}
-                      typeLabel={t(`types.${ticket.type}`)}
-                    />
+                        <DieCutTicketCard
+                          ticket={ticket}
+                          catalogNo={catalogNo}
+                          language={i18n.language}
+                          typeLabel={t(`types.${ticket.type}`)}
+                          inspectLabel={t('home.inspect3d')}
+                        />
 
-                    {/* 票面右下角显式「3D 检视 ↗」印章热区：点击直达 3D 实体检视舞台 */}
-                    <Link
-                      to="/t/$id"
-                      params={{ id: ticket.id }}
-                      onClick={(e) => e.stopPropagation()}
-                      aria-label={`${t('home.openStub')} ${ticket.title}`}
-                      title={t('home.openStub')}
-                      className="absolute right-[24.5%] bottom-[8.5%] w-[19.5%] h-[13.5%] rounded-full hover:bg-black/[0.04] transition-colors"
-                    />
-                  </div>
-                );
-              })}
+                        {/* 纸张漫射高光跟随膜 */}
+                        {isFront && (
+                          <div
+                            aria-hidden="true"
+                            className="pointer-events-none absolute inset-0 rounded-[4px] transition-opacity duration-300"
+                            style={{
+                              opacity: frontTilt.active ? 1 : 0,
+                              background: `radial-gradient(320px circle at ${frontTilt.gx.toFixed(1)}% ${frontTilt.gy.toFixed(1)}%, rgba(255,255,255,0.32), transparent 65%)`,
+                              mixBlendMode: 'soft-light',
+                            }}
+                          />
+                        )}
+
+                        {/* 票面右下角显式「3D 检视 ↗」印章热区 */}
+                        <Link
+                          to="/t/$id"
+                          params={{ id: ticket.id }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            playPaperFlip();
+                          }}
+                          aria-label={`${t('home.openStub')} ${ticket.title}`}
+                          title={t('home.openStub')}
+                          className="absolute right-[24%] bottom-[8%] w-[21%] h-[14%] rounded-full hover:bg-black/[0.045] transition-colors"
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
             {/* 右侧：博朗机械滚花转轮 + 蚀刻毫米尺 + 连续月份转鼓 + 朱红指针线 */}
@@ -1223,7 +1346,7 @@ export function TimelineView() {
               onPointerDown={handlePointerDown}
               onPointerMove={handlePointerMove}
               onPointerUp={handlePointerEnd}
-              className="hidden sm:flex items-center ml-12 lg:ml-16 relative py-2 cursor-ns-resize select-none"
+              className="hidden sm:flex items-center ml-10 lg:ml-14 relative py-2 cursor-ns-resize select-none"
               title="Scroll or drag thumbwheel to flip tickets"
             >
               <svg
@@ -1234,7 +1357,6 @@ export function TimelineView() {
                 aria-hidden="true"
               >
                 <defs>
-                  {/* 上下两端平滑渐隐遮罩：让毫米刻度尺与月份转鼓在滚动时仅需单次修改 <g> transform */}
                   <linearGradient id="rolodex-dial-fade" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="white" stopOpacity="0" />
                     <stop offset="14%" stopColor="white" stopOpacity="1" />
@@ -1247,7 +1369,6 @@ export function TimelineView() {
                 </defs>
 
                 <g mask="url(#rolodex-dial-mask)">
-                  {/* 72 条静态水平毫米刻度线（通过父级 <g> transform 实现 60fps 零开销滚动） */}
                   <g ref={rulerTicksGroupRef} transform="translate(0, 0)">
                     {Array.from({ length: 72 }).map((_, idx) => {
                       const y = -10 + idx * 4;
@@ -1267,7 +1388,6 @@ export function TimelineView() {
                     })}
                   </g>
 
-                  {/* 标准 12 月份连续日历转鼓（DEC · NOV · OCT · SEP · AUG...，当前票所属月份精准对准 y=138 朱红指针线，绝不重复显示同名月份） */}
                   <g ref={monthDrumGroupRef} transform="translate(0, 82)">
                     {Array.from({ length: 12 }).map((_, stepIdx) => {
                       const monthNum = 12 - stepIdx;
@@ -1317,11 +1437,9 @@ export function TimelineView() {
                   </g>
                 </g>
 
-                {/* 贯穿刻度尺与中心点的朱红机械指针线（精准指向金属滚轮正中央 y=138） */}
                 <line x1="0" y1="138" x2="62" y2="138" stroke="#d64c35" strokeWidth="1.5" />
               </svg>
 
-              {/* 机械滚轮凹槽与金属滚花转轮 */}
               <div className="w-[13px] h-[168px] rounded-full wheel-trough flex items-center justify-center relative -ml-[1px]">
                 <div
                   ref={knurledWheelRef}
@@ -1331,34 +1449,110 @@ export function TimelineView() {
               </div>
             </div>
           </div>
+
+          {/* 底座下方：显式馆藏检视铭牌条（提供一键进入 WebGL 3D 检视暗房的直达通道） */}
+          {activeTicket && (
+            <div className="mt-3.5 z-30 flex items-center justify-center">
+              <Link
+                to="/t/$id"
+                params={{ id: activeTicket.id }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  playPaperFlip();
+                }}
+                className="group inline-flex items-center gap-2.5 rounded-full archival-card px-4 py-1.5 text-[12px] text-fg hover:border-line-strong transition-all"
+              >
+                <span className="font-mono text-[10.5px] text-muted uppercase tracking-wider">
+                  #{activeCatalogNo}
+                </span>
+                <span
+                  aria-hidden="true"
+                  className="w-2 h-2 rounded-full shrink-0"
+                  style={{ background: MATERIAL_SWATCH_BG[activeTicket.material] }}
+                />
+                <span className="font-medium text-fg/90">{t('home.openInStage')}</span>
+                <span className="text-accent font-mono transition-transform duration-200 group-hover:translate-x-0.5">
+                  →
+                </span>
+              </Link>
+            </div>
+          )}
         </div>
       ) : (
-        /* 总览网格模式 */
-        <div className="max-w-[1160px] w-full mx-auto pt-4 pb-12 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 overflow-y-auto">
-          {filtered.map((ticket) => (
-            <Link
-              key={ticket.id}
-              to="/t/$id"
-              params={{ id: ticket.id }}
-              className="group rounded-[20px] bg-bg-raised border border-line p-5 flex flex-col justify-between gap-4 hover:border-line-strong transition-all"
-            >
-              <div className="rounded-xl bg-bg-subtle/60 p-4 flex items-center justify-center min-h-[170px]">
-                <TicketGraphicThumb ticket={ticket} />
-              </div>
+        /* 总览底片接触印相网格模式（Archival Contact Sheet） */
+        <div className="max-w-[1160px] w-full mx-auto pt-2 pb-10 space-y-4">
+          <div className="flex items-center justify-between px-1 text-[11.5px] font-mono text-muted">
+            <span>{t('home.results', { count: filtered.length })}</span>
+            <span className="hidden sm:inline uppercase tracking-wider">
+              CONTACT SHEET · 1:1 SPECIMEN MOUNTS
+            </span>
+          </div>
 
-              <div className="flex items-end justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="font-mono text-[11px] text-muted">
-                    {ticket.eventAt.slice(0, 10).replace(/-/g, '.')} · {ticketTypeCode(ticket.type)}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {filtered.map((ticket, idx) => {
+              const catNo = String(filtered.length - idx).padStart(3, '0');
+              const theme = getTicketTypeTheme(ticket.type);
+              return (
+                <Link
+                  key={ticket.id}
+                  to="/t/$id"
+                  params={{ id: ticket.id }}
+                  onClick={() => playPaperFlip()}
+                  className="group rounded-[22px] archival-card p-5 flex flex-col justify-between gap-4 hover:border-line-strong hover:-translate-y-0.5 transition-all duration-300"
+                >
+                  {/* 顶部胶片边框编号 */}
+                  <div className="flex items-center justify-between gap-2 text-[10.5px] font-mono text-muted">
+                    <span className="inline-flex items-center gap-1.5">
+                      <span
+                        className="w-2 h-2 rounded-full"
+                        style={{ backgroundColor: theme.rim }}
+                      />
+                      <span className="font-semibold text-fg">NO.{catNo}</span>
+                      <span>·</span>
+                      <span>{ticketTypeCode(ticket.type)}</span>
+                    </span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <span
+                        className="w-2 h-2 rounded-full border border-black/10"
+                        style={{ background: MATERIAL_SWATCH_BG[ticket.material] }}
+                      />
+                      <span>{t(`materials.${ticket.material}`)}</span>
+                    </span>
                   </div>
-                  <h3 className="text-[15.5px] font-semibold text-fg truncate mt-0.5">
-                    {ticket.title}
-                  </h3>
-                </div>
-                {ticket.rating !== undefined && <RatingDots value={ticket.rating} />}
-              </div>
-            </Link>
-          ))}
+
+                  {/* 居中暗盒打样底衬 */}
+                  <div className="rounded-2xl recessed-plinth p-5 flex items-center justify-center min-h-[176px] relative overflow-hidden">
+                    <TicketGraphicThumb ticket={ticket} />
+                    {ticket.wear.torn && (
+                      <span className="absolute top-2.5 right-2.5 rounded-full bg-accent/12 px-2 py-0.5 font-mono text-[10px] font-semibold text-accent">
+                        {t('home.torn')}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* 底部展签说明 */}
+                  <div className="flex items-end justify-between gap-3 pt-0.5">
+                    <div className="min-w-0">
+                      <div className="font-mono text-[11px] text-muted tabular-nums">
+                        {ticket.eventAt.slice(0, 10).replace(/-/g, '.')}
+                        {ticket.city ? ` · ${ticket.city}` : ''}
+                      </div>
+                      <h3 className="text-[16px] font-semibold tracking-[-0.015em] text-fg truncate mt-0.5 group-hover:text-accent transition-colors">
+                        {ticket.title}
+                      </h3>
+                      {ticket.venueName && (
+                        <div className="text-[12px] text-muted truncate mt-0.5">
+                          {ticket.venueName}
+                          {ticket.seat ? ` · ${ticket.seat}` : ''}
+                        </div>
+                      )}
+                    </div>
+                    {ticket.rating !== undefined && <RatingDots value={ticket.rating} />}
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>

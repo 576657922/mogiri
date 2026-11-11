@@ -21,6 +21,7 @@ export {
   parseEventLocalTime,
 } from './time';
 export {
+  computeJourneyDistanceKm,
   computeRecapStats,
   filterTickets,
   type GroupedTimeline,

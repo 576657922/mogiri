@@ -14,3 +14,11 @@ export {
   warpPerspectiveToCanvas,
 } from './perspective';
 export { dataUrlToBlob, downloadOrShareBlob, readFileAsDataUrl } from './share';
+export {
+  isSfxEnabled,
+  playDetentClick,
+  playPaperFlip,
+  playPunchClack,
+  playTearRip,
+  setSfxEnabled,
+} from './tactile-audio';

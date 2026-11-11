@@ -21,8 +21,24 @@ import {
   type RecognitionDraft,
   toTicketSpec,
 } from '../../domain';
-import { dataUrlToBlob, getDefaultTimezone, readFileAsDataUrl } from '../../platform';
-import { Btn, btnClass, Container, Field, SectionHead } from '../../ui';
+import {
+  dataUrlToBlob,
+  getDefaultTimezone,
+  playDetentClick,
+  playPunchClack,
+  readFileAsDataUrl,
+} from '../../platform';
+import {
+  Btn,
+  btnClass,
+  Container,
+  Field,
+  getTicketTypeTheme,
+  Label,
+  MATERIAL_SWATCH_BG,
+  Reveal,
+  SectionHead,
+} from '../../ui';
 
 const EXT_FIELDS_BY_TYPE: Record<TicketType, readonly string[]> = {
   flight: ['airline', 'flightNo', 'from', 'to', 'gate', 'cabin', 'boardingTime'],
@@ -103,6 +119,7 @@ export const TicketFormView: React.FC<TicketFormViewProps> = ({
   const [note, setNote] = useState<string>(initialDraft?.input.note ?? '');
   const [scanDataUrl, setScanDataUrl] = useState<string | undefined>(initialScanDataUrl);
   const [previewUrl, setPreviewUrl] = useState<string>('');
+  const [proofMat, setProofMat] = useState<'light' | 'dark'>('dark');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -222,6 +239,8 @@ export const TicketFormView: React.FC<TicketFormViewProps> = ({
     age,
   ]);
 
+  const liveSpec = useMemo(() => toTicketSpec(tempRecord), [tempRecord]);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -244,6 +263,7 @@ export const TicketFormView: React.FC<TicketFormViewProps> = ({
   }, [tempRecord, scanDataUrl]);
 
   const handleTypeChange = (nextType: TicketType) => {
+    playDetentClick();
     setType(nextType);
     if (!existingTicket) {
       setMaterial(defaultMaterialForType(nextType));
@@ -256,7 +276,7 @@ export const TicketFormView: React.FC<TicketFormViewProps> = ({
     const conf = initialDraft.confidences[fieldKey] ?? 0;
     const pct = Math.round(conf * 100);
     return (
-      <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10.5px] font-medium text-accent">
+      <span className="rounded-full bg-accent/10 px-2 py-0.5 font-mono tabular-nums text-[10.5px] font-medium text-accent">
         {t('form.lowConfidence', { pct })}
       </span>
     );
@@ -268,6 +288,7 @@ export const TicketFormView: React.FC<TicketFormViewProps> = ({
   const handleUploadScanFront = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    playDetentClick();
     const url = await readFileAsDataUrl(file);
     setScanDataUrl(url);
     e.target.value = '';
@@ -276,6 +297,7 @@ export const TicketFormView: React.FC<TicketFormViewProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (saving) return;
+    playPunchClack();
     setSaving(true);
     try {
       const normalizedEventAt = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2})?$/.test(eventAt.trim())
@@ -374,15 +396,22 @@ export const TicketFormView: React.FC<TicketFormViewProps> = ({
   };
 
   const extFields = EXT_FIELDS_BY_TYPE[type];
+  const activeTypeTheme = getTicketTypeTheme(type);
+
   const content = (
     <form onSubmit={handleSubmit} className="space-y-6">
       {!initialDraft && (
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-baseline gap-3">
-            <h1 className="text-[20px] font-semibold tracking-[-0.02em] text-fg">
-              {existingTicket ? t('form.editTitle') : t('form.createTitle')}
-            </h1>
-            <span className="text-[13.5px] text-muted">{t('form.previewHint')}</span>
+        <Reveal className="flex flex-wrap items-end justify-between gap-4">
+          <div className="space-y-1">
+            <Label index={existingTicket ? 'REV' : 'NEW'}>
+              {existingTicket ? t('form.eyebrowEdit') : t('form.eyebrowNew')}
+            </Label>
+            <div className="flex flex-wrap items-baseline gap-3">
+              <h1 className="font-editorial text-[26px] sm:text-[32px] leading-[1.12] tracking-[-0.02em] text-fg">
+                {existingTicket ? t('form.editTitle') : t('form.createTitle')}
+              </h1>
+              <span className="text-[13px] text-muted">{t('form.previewHint')}</span>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -396,105 +425,208 @@ export const TicketFormView: React.FC<TicketFormViewProps> = ({
             >
               {t('form.cancel')}
             </Btn>
-            <Btn type="submit" variant="solid" disabled={saving}>
+            <Btn type="submit" variant="solid" arrow disabled={saving}>
               {saving ? t('form.saving') : t('form.save')}
             </Btn>
           </div>
-        </div>
+        </Reveal>
       )}
 
-      {/* 双栏排版：左侧常驻实时打样卡片，右侧 Bento 表单卡片 */}
+      {/* 双栏排版：左侧常驻活版打样台，右侧瑞士档案卡片表单 */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* 左栏：实时票面打样（Live Proof） */}
-        <div className="lg:col-span-5 lg:sticky lg:top-6 rounded-[20px] bg-bg-raised border border-line p-5 space-y-4">
-          <div className="flex items-center justify-between text-[12px] text-muted">
-            <span className="font-medium text-fg">{t('form.preview')}</span>
-            <span>
-              {t(`types.${type}`)} · {t(`materials.${material}`)}
-            </span>
-          </div>
-
-          <div className="rounded-2xl bg-bg-subtle/80 p-6 flex flex-col items-center justify-center min-h-[220px]">
-            {previewUrl && (
-              <img
-                src={previewUrl}
-                alt={title || 'Ticket proof'}
-                className="max-h-52 w-auto object-contain stub-shadow"
+        {/* 左栏：活版印刷实时打样台（Letterpress Proofing Bed） */}
+        <div className="lg:col-span-5 lg:sticky lg:top-20 archival-card rounded-[22px] p-5 space-y-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span
+                className="h-2 w-2 rounded-full shrink-0"
+                style={{ background: activeTypeTheme.rim }}
               />
-            )}
-          </div>
+              <span className="text-[13px] font-semibold text-fg">{t('form.preview')}</span>
+            </div>
 
-          {/* 纸张工艺快速胶囊 */}
-          <div className="space-y-2">
-            <div className="text-[12px] font-medium text-muted">{t('form.material')}</div>
-            <div className="flex flex-wrap gap-1.5">
-              {MATERIALS.map((mat) => {
-                const active = material === mat;
+            {/* 浅色暖石 / 黑曜暗房垫板切换器 */}
+            <div className="inline-flex items-center rounded-full bg-bg-subtle p-0.5">
+              {(['dark', 'light'] as const).map((matMode) => {
+                const active = proofMat === matMode;
                 return (
                   <button
-                    key={mat}
+                    key={matMode}
                     type="button"
-                    onClick={() => setMaterial(mat)}
-                    className={`h-7 rounded-full px-3 text-[12px] font-medium transition-colors cursor-pointer ${
-                      active ? 'bg-fg text-bg-raised' : 'bg-bg-subtle text-muted hover:text-fg'
+                    onClick={() => {
+                      playDetentClick();
+                      setProofMat(matMode);
+                    }}
+                    className={`h-6 rounded-full px-2.5 text-[11px] font-medium transition-all cursor-pointer ${
+                      active ? 'bg-bg-raised text-fg shadow-2xs' : 'text-muted hover:text-fg'
                     }`}
                   >
-                    {t(`materials.${mat}`)}
+                    {matMode === 'dark' ? t('form.proofDark') : t('form.proofLight')}
                   </button>
                 );
               })}
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-line">
-            <label className={`${btnClass('pill')} cursor-pointer`}>
-              <span>{scanDataUrl ? t('form.replaceScan') : t('form.uploadScan')}</span>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleUploadScanFront}
-                className="hidden"
+          {/* 光学裁切靶标打样盘 */}
+          <div
+            className={`relative rounded-2xl p-6 flex flex-col items-center justify-center min-h-[244px] overflow-hidden transition-colors ${
+              proofMat === 'dark' ? 'stage-obsidian text-white/75' : 'stage-limestone text-fg/70'
+            }`}
+          >
+            <span className="pointer-events-none absolute top-2.5 left-3 font-mono text-[10px] opacity-45">
+              +
+            </span>
+            <span className="pointer-events-none absolute top-2.5 right-3 font-mono text-[10px] opacity-45">
+              +
+            </span>
+            <span className="pointer-events-none absolute bottom-2.5 left-3 font-mono text-[10px] opacity-45">
+              +
+            </span>
+            <span className="pointer-events-none absolute bottom-2.5 right-3 font-mono text-[10px] opacity-45">
+              +
+            </span>
+
+            {previewUrl && (
+              <img
+                src={previewUrl}
+                alt={title || 'Ticket proof'}
+                className="max-h-52 w-auto object-contain stub-shadow transition-transform duration-300 hover:scale-[1.02] hover:-rotate-1"
               />
-            </label>
-            {scanDataUrl && (
-              <Btn
-                variant="ghost"
-                className="text-xs text-accent"
-                onClick={() => setScanDataUrl(undefined)}
-              >
-                {t('form.clearScan')}
-              </Btn>
             )}
+
+            <div className="mt-4 flex items-center gap-2 font-mono tabular-nums text-[10px] tracking-wider uppercase opacity-65">
+              <span>
+                {liveSpec.sizeMm?.w ?? 165} × {liveSpec.sizeMm?.h ?? 70} MM
+              </span>
+              <span>·</span>
+              <span>{t(`types.${type}`)}</span>
+              <span>·</span>
+              <span>{t(`materials.${material}`)}</span>
+            </div>
+          </div>
+
+          {/* 特种纸张与烫印工艺样本色卡 */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-[12px]">
+              <span className="font-medium text-muted">{t('form.material')}</span>
+              <span className="font-mono text-[10.5px] text-faint uppercase">{material}</span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+              {MATERIALS.map((mat) => {
+                const active = material === mat;
+                return (
+                  <button
+                    key={mat}
+                    type="button"
+                    onClick={() => {
+                      playDetentClick();
+                      setMaterial(mat);
+                    }}
+                    className={`h-8 rounded-xl px-2.5 text-[12px] font-medium flex items-center gap-2 transition-all cursor-pointer border ${
+                      active
+                        ? 'bg-fg text-bg-raised border-fg shadow-2xs'
+                        : 'bg-bg-subtle/75 text-muted hover:text-fg border-line'
+                    }`}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="h-3.5 w-3.5 rounded-full shrink-0 border border-black/15 shadow-2xs"
+                      style={{ background: MATERIAL_SWATCH_BG[mat] }}
+                    />
+                    <span className="truncate">{t(`materials.${mat}`)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 岁月包浆滑杆 */}
+          <div className="space-y-1.5 pt-1">
+            <div className="flex items-center justify-between text-[12px]">
+              <label htmlFor="field-age-slider" className="font-medium text-muted">
+                {t('form.age')}
+              </label>
+              <span className="font-mono tabular-nums text-[11px] text-muted">
+                {Math.round(age * 100)}%
+              </span>
+            </div>
+            <input
+              id="field-age-slider"
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={age}
+              onChange={(e) => setAge(Number(e.target.value))}
+              className="w-full accent-accent cursor-pointer h-1.5 rounded-lg bg-bg-subtle"
+            />
+          </div>
+
+          {/* 实拍原票纹理覆贴 */}
+          <div className="pt-3 border-t border-line space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label className={`${btnClass('pill')} cursor-pointer`}>
+                <span>{scanDataUrl ? t('form.replaceScan') : t('form.uploadScan')}</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => void handleUploadScanFront(e)}
+                  className="hidden"
+                />
+              </label>
+              {scanDataUrl && (
+                <Btn
+                  variant="ghost"
+                  className="text-xs text-accent"
+                  onClick={() => {
+                    playDetentClick();
+                    setScanDataUrl(undefined);
+                  }}
+                >
+                  {t('form.clearScan')}
+                </Btn>
+              )}
+            </div>
+            <p className="text-[11px] text-faint leading-relaxed">{t('form.scanHint')}</p>
           </div>
 
           {initialDraft && initialDraft.lowConfidenceKeys.length > 0 && (
-            <div className="rounded-xl bg-accent/8 px-3.5 py-2.5 text-[12px] text-accent">
+            <div className="rounded-xl border border-accent/25 bg-accent/8 px-3.5 py-2.5 text-[12px] text-accent">
               {t('form.lowConfidenceHint')}
             </div>
           )}
         </div>
 
-        {/* 右栏：分组 Bento 卡片表单 */}
+        {/* 右栏：分组瑞士档案卡片表单 */}
         <div className="lg:col-span-7 space-y-5">
-          {/* 基本信息卡片 */}
-          <section className="rounded-[20px] bg-bg-raised border border-line p-6 space-y-5">
-            <SectionHead title={t('form.s1')} />
+          {/* 01 · 核心票面信息 */}
+          <section className="archival-card rounded-[22px] p-5 sm:p-6 space-y-5">
+            <SectionHead index="01" title={t('form.s1')} />
 
             <div className="space-y-2">
               <div className="text-[12px] font-medium text-muted">{t('form.type')}</div>
               <div className="flex flex-wrap gap-1.5">
                 {TICKET_TYPES.map((tk) => {
                   const active = type === tk;
+                  const tkTheme = getTicketTypeTheme(tk);
                   return (
                     <button
                       key={tk}
                       type="button"
                       onClick={() => handleTypeChange(tk)}
-                      className={`h-8 rounded-full px-3.5 text-[12.5px] font-medium transition-colors cursor-pointer ${
-                        active ? 'bg-fg text-bg-raised' : 'bg-bg-subtle text-muted hover:text-fg'
+                      className={`h-8 rounded-full px-3 text-[12.5px] font-medium inline-flex items-center gap-2 transition-all cursor-pointer border ${
+                        active
+                          ? 'bg-fg text-bg-raised border-fg shadow-2xs'
+                          : 'bg-bg-subtle/80 text-muted hover:text-fg border-transparent'
                       }`}
                     >
-                      {t(`types.${tk}`)}
+                      <span
+                        aria-hidden="true"
+                        className="h-2 w-2 rounded-full shrink-0"
+                        style={{ background: tkTheme.rim }}
+                      />
+                      <span>{t(`types.${tk}`)}</span>
                     </button>
                   );
                 })}
@@ -545,7 +677,7 @@ export const TicketFormView: React.FC<TicketFormViewProps> = ({
                   value={eventAt}
                   data-low={isLow('eventAt')}
                   onChange={(e) => setEventAt(e.target.value)}
-                  className="field font-mono"
+                  className="field font-mono tabular-nums"
                 />
               </Field>
 
@@ -622,7 +754,7 @@ export const TicketFormView: React.FC<TicketFormViewProps> = ({
                     value={priceAmountStr}
                     data-low={isLow('price')}
                     onChange={(e) => setPriceAmountStr(e.target.value)}
-                    className="field font-mono"
+                    className="field font-mono tabular-nums"
                   />
                 </Field>
                 <Field label={t('form.priceCurrency')} htmlFor="field-currency">
@@ -644,7 +776,7 @@ export const TicketFormView: React.FC<TicketFormViewProps> = ({
                   placeholder="35.7056"
                   value={latStr}
                   onChange={(e) => setLatStr(e.target.value)}
-                  className="field font-mono"
+                  className="field font-mono tabular-nums"
                 />
               </Field>
 
@@ -656,16 +788,16 @@ export const TicketFormView: React.FC<TicketFormViewProps> = ({
                   placeholder="139.7519"
                   value={lngStr}
                   onChange={(e) => setLngStr(e.target.value)}
-                  className="field font-mono"
+                  className="field font-mono tabular-nums"
                 />
               </Field>
             </div>
           </section>
 
-          {/* 票面扩展字段卡片 */}
+          {/* 02 · 票种专属扩展字段 */}
           {extFields.length > 0 && (
-            <section className="rounded-[20px] bg-bg-raised border border-line p-6 space-y-4">
-              <SectionHead title={`${t('form.s2')} · ${t(`types.${type}`)}`} />
+            <section className="archival-card rounded-[22px] p-5 sm:p-6 space-y-4">
+              <SectionHead index="02" title={`${t('form.s2')} · ${t(`types.${type}`)}`} />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {extFields.map((key) => (
                   <Field
@@ -688,28 +820,40 @@ export const TicketFormView: React.FC<TicketFormViewProps> = ({
             </section>
           )}
 
-          {/* 那一天卡片 */}
-          <section className="rounded-[20px] bg-bg-raised border border-line p-6 space-y-4">
-            <SectionHead title={t('form.s4')} />
+          {/* 03 · 那一天的记忆 */}
+          <section className="archival-card rounded-[22px] p-5 sm:p-6 space-y-4">
+            <SectionHead index={extFields.length > 0 ? '03' : '02'} title={t('form.s4')} />
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
-                <div className="text-[12px] font-medium text-muted mb-1.5">{t('form.rating')}</div>
-                <div className="flex items-center gap-1">
-                  {[1, 2, 3, 4, 5].map((star) => (
-                    <button
-                      key={star}
-                      type="button"
-                      onClick={() => setRating(star)}
-                      className={`h-8 w-8 rounded-full text-xs font-medium transition-colors cursor-pointer ${
-                        star <= rating
-                          ? 'bg-fg text-bg-raised'
-                          : 'bg-bg-subtle text-muted hover:text-fg'
-                      }`}
-                    >
-                      {star}
-                    </button>
-                  ))}
+                <div className="flex items-center justify-between text-[12px] font-medium text-muted mb-1.5">
+                  <span>{t('form.rating')}</span>
+                  <span className="font-mono tabular-nums text-[11px] text-accent">
+                    {rating}.0 / 5
+                  </span>
+                </div>
+                <div className="recessed-plinth rounded-xl p-1 inline-flex items-center gap-1">
+                  {[1, 2, 3, 4, 5].map((star) => {
+                    const active = star <= rating;
+                    return (
+                      <button
+                        key={star}
+                        type="button"
+                        aria-label={`${star} / 5`}
+                        onClick={() => {
+                          playDetentClick();
+                          setRating(star);
+                        }}
+                        className={`h-8 w-8 rounded-lg text-[13px] transition-all cursor-pointer flex items-center justify-center ${
+                          active
+                            ? 'bg-accent text-white shadow-2xs'
+                            : 'text-muted/65 hover:text-fg hover:bg-bg-raised/60'
+                        }`}
+                      >
+                        ★
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -745,7 +889,7 @@ export const TicketFormView: React.FC<TicketFormViewProps> = ({
                 placeholder={t('form.notePlaceholder')}
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                className="field resize-y"
+                className="field font-editorial text-[15px] leading-relaxed resize-y"
               />
             </Field>
           </section>

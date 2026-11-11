@@ -13,14 +13,22 @@ import {
 } from '../../data';
 import { daysUntilPermanentDelete, ensureSeedTickets } from '../../domain';
 import { SUPPORTED_LOCALES, type SupportedLocale, setAppLocale } from '../../i18n';
-import { downloadOrShareBlob } from '../../platform';
-import { Btn, btnClass, Container, SectionHead, useUiStore } from '../../ui';
+import { downloadOrShareBlob, playDetentClick } from '../../platform';
+import { Btn, btnClass, Container, Label, Reveal, SectionHead, useUiStore } from '../../ui';
+
+const LOCALE_GLYPH: Record<string, string> = {
+  'zh-CN': '永',
+  ja: 'あ',
+  en: 'Aa',
+};
 
 export const SettingsView: React.FC = () => {
   const { t, i18n } = useTranslation();
   const qualityPref = useUiStore((s) => s.qualityPref);
   const resolvedQuality = useUiStore((s) => s.resolvedQuality);
+  const sfxEnabled = useUiStore((s) => s.sfxEnabled);
   const setQualityPref = useUiStore((s) => s.setQualityPref);
+  const setSfxEnabled = useUiStore((s) => s.setSfxEnabled);
 
   const [importMessage, setImportMessage] = useState<string | null>(null);
 
@@ -31,6 +39,7 @@ export const SettingsView: React.FC = () => {
   );
 
   const handleExportJson = async () => {
+    playDetentClick();
     const bundle = await exportBackupBundle();
     const json = JSON.stringify(bundle, null, 2);
     const blob = new Blob([json], { type: 'application/json' });
@@ -44,6 +53,7 @@ export const SettingsView: React.FC = () => {
       const text = await file.text();
       const raw: unknown = JSON.parse(text);
       const res = await importBackupBundle(raw);
+      playDetentClick();
       setImportMessage(
         t('settings.importDone', {
           tickets: res.ticketsCount,
@@ -58,8 +68,17 @@ export const SettingsView: React.FC = () => {
   };
 
   const handleResetSeed = async () => {
+    playDetentClick();
     await clearAllLocalData();
     await ensureSeedTickets();
+  };
+
+  const handleToggleSfx = () => {
+    const next = !sfxEnabled;
+    setSfxEnabled(next);
+    if (next) {
+      playDetentClick();
+    }
   };
 
   const qualityChoices: { value: 'auto' | QualityTier; labelKey: string; descKey: string }[] = [
@@ -86,17 +105,18 @@ export const SettingsView: React.FC = () => {
   ];
 
   return (
-    <Container className="py-6 sm:py-8 space-y-6 max-w-[920px]">
-      <header className="flex items-baseline gap-3">
-        <h1 className="text-[20px] font-semibold tracking-[-0.02em] text-fg">
+    <Container className="py-6 sm:py-8 space-y-6 max-w-[940px]">
+      <Reveal className="space-y-1.5">
+        <Label index="SYS">{t('settings.eyebrow')}</Label>
+        <h1 className="font-editorial text-[26px] sm:text-[32px] leading-[1.12] tracking-[-0.02em] text-fg">
           {t('settings.title')}
         </h1>
-      </header>
+      </Reveal>
 
       <div className="space-y-5">
-        {/* 语言 */}
-        <section className="rounded-[20px] bg-bg-raised border border-line p-6 space-y-4">
-          <SectionHead title={t('settings.language')} />
+        {/* 01 · 语言与字体 */}
+        <section className="archival-card rounded-[22px] p-5 sm:p-6 space-y-4">
+          <SectionHead index="01" title={t('settings.language')} />
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
             {SUPPORTED_LOCALES.map((loc) => {
               const active = i18n.language === loc.code;
@@ -104,30 +124,70 @@ export const SettingsView: React.FC = () => {
                 <button
                   key={loc.code}
                   type="button"
-                  onClick={() => setAppLocale(loc.code as SupportedLocale)}
-                  className={`rounded-2xl p-4 text-left transition-all cursor-pointer ${
+                  onClick={() => {
+                    playDetentClick();
+                    setAppLocale(loc.code as SupportedLocale);
+                  }}
+                  className={`rounded-2xl p-4 text-left transition-all cursor-pointer border flex items-center justify-between gap-3 ${
                     active
-                      ? 'bg-fg text-bg-raised shadow-xs'
-                      : 'bg-bg-subtle/75 hover:bg-bg-subtle text-fg'
+                      ? 'bg-fg text-bg-raised border-fg shadow-xs'
+                      : 'bg-bg-subtle/75 hover:bg-bg-subtle border-line text-fg'
                   }`}
                 >
-                  <div
-                    className={`font-mono text-[11px] uppercase ${
-                      active ? 'text-bg-raised/70' : 'text-muted'
+                  <div>
+                    <div
+                      className={`font-mono text-[10.5px] uppercase ${
+                        active ? 'text-bg-raised/70' : 'text-muted'
+                      }`}
+                    >
+                      {loc.code}
+                    </div>
+                    <div className="text-[15px] font-semibold mt-0.5">{loc.label}</div>
+                  </div>
+                  <span
+                    className={`font-editorial text-[26px] leading-none ${
+                      active ? 'text-bg-raised/85' : 'text-faint'
                     }`}
                   >
-                    {loc.code}
-                  </div>
-                  <div className="text-[15px] font-semibold mt-0.5">{loc.label}</div>
+                    {LOCALE_GLYPH[loc.code] ?? 'Aa'}
+                  </span>
                 </button>
               );
             })}
           </div>
         </section>
 
-        {/* 渲染档位 */}
-        <section className="rounded-[20px] bg-bg-raised border border-line p-6 space-y-4">
+        {/* 02 · 博朗机械棘轮声效 */}
+        <section className="archival-card rounded-[22px] p-5 sm:p-6 flex flex-wrap items-center justify-between gap-4">
+          <div className="space-y-1 max-w-xl">
+            <div className="flex items-center gap-2.5">
+              <span className="font-mono text-[11px] text-faint">02</span>
+              <h2 className="text-[16px] font-semibold tracking-[-0.015em] text-fg">
+                {t('settings.sfx')}
+              </h2>
+            </div>
+            <p className="text-[13px] text-muted">{t('settings.sfxDesc')}</p>
+          </div>
+
+          <button
+            type="button"
+            aria-pressed={sfxEnabled}
+            onClick={handleToggleSfx}
+            className={`h-10 rounded-full px-4 text-[12.5px] font-medium inline-flex items-center gap-2.5 transition-all cursor-pointer border ${
+              sfxEnabled
+                ? 'bg-fg text-bg-raised border-fg shadow-xs'
+                : 'bg-bg-subtle text-muted hover:text-fg border-line'
+            }`}
+          >
+            <span className={`h-2 w-2 rounded-full ${sfxEnabled ? 'bg-accent' : 'bg-muted/50'}`} />
+            <span>{sfxEnabled ? t('settings.sfxOn') : t('settings.sfxOff')}</span>
+          </button>
+        </section>
+
+        {/* 03 · WebGL 光学渲染档位 */}
+        <section className="archival-card rounded-[22px] p-5 sm:p-6 space-y-4">
           <SectionHead
+            index="03"
             title={t('settings.quality')}
             aside={
               <span className="rounded-full bg-bg-subtle px-2.5 py-0.5 font-mono text-[11px] text-muted">
@@ -142,11 +202,14 @@ export const SettingsView: React.FC = () => {
                 <button
                   key={choice.value}
                   type="button"
-                  onClick={() => setQualityPref(choice.value)}
-                  className={`rounded-2xl p-4 text-left transition-all cursor-pointer ${
+                  onClick={() => {
+                    playDetentClick();
+                    setQualityPref(choice.value);
+                  }}
+                  className={`rounded-2xl p-4 text-left transition-all cursor-pointer border ${
                     active
-                      ? 'bg-fg text-bg-raised shadow-xs'
-                      : 'bg-bg-subtle/75 hover:bg-bg-subtle text-fg'
+                      ? 'bg-fg text-bg-raised border-fg shadow-xs'
+                      : 'bg-bg-subtle/75 hover:bg-bg-subtle border-line text-fg'
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -168,9 +231,9 @@ export const SettingsView: React.FC = () => {
           </div>
         </section>
 
-        {/* 备份与恢复 */}
-        <section className="rounded-[20px] bg-bg-raised border border-line p-6 space-y-4">
-          <SectionHead title={t('settings.backup')} />
+        {/* 04 · 本地离线备份与迁移 */}
+        <section className="archival-card rounded-[22px] p-5 sm:p-6 space-y-4">
+          <SectionHead index="04" title={t('settings.backup')} />
           <p className="text-[13px] text-muted">{t('settings.backupDesc')}</p>
           <div className="flex flex-wrap items-center gap-2.5">
             <Btn variant="solid" onClick={() => void handleExportJson()}>
@@ -190,13 +253,13 @@ export const SettingsView: React.FC = () => {
           {importMessage && <p className="text-[12.5px] text-accent">{importMessage}</p>}
         </section>
 
-        {/* 回收站 */}
-        <section className="rounded-[20px] bg-bg-raised border border-line p-6 space-y-4">
-          <SectionHead title={`${t('settings.trash')} (${deletedTickets.length})`} />
+        {/* 05 · 回收站（30 天缓冲） */}
+        <section className="archival-card rounded-[22px] p-5 sm:p-6 space-y-4">
+          <SectionHead index="05" title={`${t('settings.trash')} (${deletedTickets.length})`} />
           <p className="text-[13px] text-muted">{t('settings.trashDesc')}</p>
 
           {deletedTickets.length === 0 ? (
-            <p className="rounded-xl bg-bg-subtle/60 py-6 text-center text-[13px] text-muted">
+            <p className="recessed-plinth rounded-xl py-6 text-center text-[13px] text-muted">
               {t('settings.trashEmpty')}
             </p>
           ) : (
@@ -210,15 +273,27 @@ export const SettingsView: React.FC = () => {
                   >
                     <div>
                       <div className="text-[14px] font-semibold text-fg">{tk.title}</div>
-                      <div className="font-mono text-[11.5px] text-muted mt-0.5">
+                      <div className="font-mono tabular-nums text-[11.5px] text-muted mt-0.5">
                         {tk.eventAt} · {t('settings.daysLeft', { days: daysLeft })}
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Btn variant="pill" onClick={() => void restoreTicket(tk.id)}>
+                      <Btn
+                        variant="pill"
+                        onClick={() => {
+                          playDetentClick();
+                          void restoreTicket(tk.id);
+                        }}
+                      >
                         {t('settings.restore')}
                       </Btn>
-                      <Btn variant="ghost" onClick={() => void hardDeleteTicket(tk.id)}>
+                      <Btn
+                        variant="ghost"
+                        onClick={() => {
+                          playDetentClick();
+                          void hardDeleteTicket(tk.id);
+                        }}
+                      >
                         {t('settings.deleteForever')}
                       </Btn>
                     </div>
@@ -229,10 +304,13 @@ export const SettingsView: React.FC = () => {
           )}
         </section>
 
-        {/* 示例数据 */}
-        <section className="rounded-[20px] bg-bg-raised border border-line p-6 flex flex-wrap items-center justify-between gap-4">
+        {/* 06 · 恢复出厂示例馆藏 */}
+        <section className="archival-card rounded-[22px] p-5 sm:p-6 flex flex-wrap items-center justify-between gap-4">
           <div className="space-y-1">
-            <h2 className="text-[15px] font-semibold text-fg">{t('settings.reset')}</h2>
+            <div className="flex items-center gap-2.5">
+              <span className="font-mono text-[11px] text-faint">06</span>
+              <h2 className="text-[15.5px] font-semibold text-fg">{t('settings.reset')}</h2>
+            </div>
             <p className="text-[13px] text-muted">{t('settings.resetDesc')}</p>
           </div>
           <Btn variant="outline" onClick={() => void handleResetSeed()}>

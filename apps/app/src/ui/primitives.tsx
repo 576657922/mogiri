@@ -236,7 +236,7 @@ export function RatingDots({ value, size = 6 }: { value: number; size?: number }
       {[1, 2, 3, 4, 5].map((n) => (
         <span
           key={n}
-          className={`rounded-full ${n <= value ? 'bg-fg' : 'bg-black/12'}`}
+          className={`rounded-full transition-colors ${n <= value ? 'bg-accent' : 'bg-black/14'}`}
           style={{ width: size, height: size }}
         />
       ))}

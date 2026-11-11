@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { computeHomography, mapHomography } from '../platform';
 import {
+  computeJourneyDistanceKm,
   computeRecapStats,
   daysUntilEvent,
   filterTickets,
@@ -62,13 +63,25 @@ describe('timeline & recap stats', () => {
     expect(grouped.groups.map((g) => g.yearMonth)).toEqual(['2026-11', '2026-10', '2026-09']);
   });
 
-  it('computes recap stats', () => {
+  it('computes recap stats and monthly rhythm', () => {
     const stats = computeRecapStats(records, 2026);
     expect(stats.totalTickets).toBe(5);
+    expect(stats.byMonth).toHaveLength(12);
+    expect(stats.byMonth.reduce((a, b) => a + b, 0)).toBe(5);
     expect(stats.spendByCurrency.JPY).toBe(11000 + 14720 + 24800 + 2200 + 16500);
     expect(stats.tornCount).toBe(1);
     expect(stats.cities).toContain('東京');
     expect(stats.cities).toContain('札幌');
+  });
+
+  it('computes great-circle journey distance in km', () => {
+    const km = computeJourneyDistanceKm([
+      { lat: 35.6812, lng: 139.7671 }, // Tokyo
+      { lat: 34.7335, lng: 135.5001 }, // Shin-Osaka
+    ]);
+    expect(km).toBeGreaterThan(380);
+    expect(km).toBeLessThan(430);
+    expect(computeJourneyDistanceKm([{ lat: 35.6812, lng: 139.7671 }])).toBe(0);
   });
 
   it('converts TicketRecord to renderer TicketSpec', () => {

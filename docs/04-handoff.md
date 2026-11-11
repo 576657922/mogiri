@@ -134,7 +134,7 @@ const final = cloud ? mergeResults(local, cloud) : local.result;
 
 ### 3.3 测试结果
 
-- 测试共 225 个，全部通过；其中 `shared` 193 个、`renderer` 16 个、`app` 16 个。
+- 测试共 226 个，全部通过；其中 `shared` 193 个、`renderer` 16 个、`app` 17 个。
 - fixtures：各字段准确率 100%；**本地识别完成率 6/9 = 67%**（JR × 2、登机牌、TOHO、万达、英文棒球直接完成；两张演唱会票和韩文展览按预期走云端文字模式，它们的日期、座位、价格都在本地提取对了，只有标题置信度不够）。
 
 ---
@@ -147,6 +147,7 @@ const final = cloud ? mergeResults(local, cloud) : local.result;
   - `perspective.ts`：8×9 高斯消元单应性矩阵（Homography）求解与 Canvas2D 透视拉正（`computeHomography`、`warpPerspectiveToCanvas`）。
   - `ocr.ts`：原生 Capacitor OCR 插件调用协议（`runNativeOcr`）+ 4 套内置真机识别预设样本（JR 新干线、羽田→新千岁 BCBP 登机牌、TOHO 电影票、东京巨蛋演唱会票）。
   - `share.ts`：Web Share API / 本地文件下载与 Blob 转换。
+  - `tactile-audio.ts`：零依赖 Web Audio 博朗机械声效合成器（`playDetentClick`、`playPaperFlip`、`playPunchClack`、`playTearRip`），遵循 `prefers-reduced-motion` 并持久化开关状态。
 - **`src/data/`**：
   - `db.ts` & `schemas.ts`：Dexie IndexedDB（`tickets`、`media`、`blobs`、`outbox`、`meta`）+ 完整 Zod 校验。
   - `tickets.repo.ts` & `media.repo.ts`：票据与照片 CRUD 与 `outbox` 严格同事务提交；30 天回收站软删除、恢复与到期自动清理；JSON 全量备份导出与 Zod 校验导入。
@@ -154,11 +155,12 @@ const final = cloud ? mergeResults(local, cloud) : local.result;
 - **`src/domain/`**：
   - `time.ts`：不依赖 `new Date(string)` 的本地活动时间解析、排序、即将到来倒计时计算。
   - `ticket-spec.ts`：`TicketRecord → TicketSpec` 桥接。
-  - `timeline.ts`：多维筛选（票型 / 年份 / 标签 / 关键词）、按年/月倒序分组、年度回顾统计 `computeRecapStats`。
+  - `timeline.ts`：多维筛选（票型 / 年份 / 标签 / 关键词）、按年/月倒序分组、年度回顾统计 `computeRecapStats`（含 12 个月节律 `byMonth`）及球面大圆航迹里程 `computeJourneyDistanceKm`。
   - `recognition-bridge.ts`：将识别输出转为表单草稿，并提取置信度 < 0.8 的字段列表供确认页高亮。
 - **`src/ui/` & `src/features/` & `src/routes/`**：
+  - `theme.ts`：全应用共享的票种语义工业色谱（`TICKET_TYPE_THEMES`）与 6 款特种纸光泽色板（`MATERIAL_SWATCH_BG`）。
   - `GlobalTicketStageHost.tsx`：全局唯一 `<TicketCanvas>` 实例，详情页挂载 `#mogiri-stage-slot` 时自动贴合覆盖，避免多 WebGL 上下文崩溃。
-  - 完整路由：`/`（时间轴票夹堆叠/网格视图）、`/scan`（照片四角透视裁切 + 本地识别实测台）、`/scan/confirm`（识别路由状态 + 低置信度字段高亮确认）、`/t/$id`（3D 舞台交互、翻面、撕副券、打孔、泛黄、高清 PNG 海报导出、现场照片墙）、`/t/$id/edit` & `/t/new/edit`（8 票型动态表单）、`/recap/$year`（年度统计）、`/map`（足迹地图）、`/settings`（中/日/英切换、渲染档位、JSON 备份导入导出、回收站恢复）。
+  - 完整路由：`/`（五色半券叠卡匣 + 啮合滚轮 / 接触印相网格总览）、`/scan`（三级隐私管线 + 拖拽透视裁切 + 模切真机样本台）、`/scan/confirm`（识别路由状态 + 低置信度字段高亮确认）、`/t/$id`（三档底衬 3D 光学暗房、翻面、撕副券、打孔、泛黄、1800×1200 珍藏海报冲印室与 `SHARE-03` 条码/座位隐私打码、现场底片墙）、`/t/$id/edit` & `/t/new/edit`（活版实时打样台 + 8 票型动态表单）、`/recap/$year`（年度票根年鉴与月度节律图）、`/map`（WGS84 黑曜大地足迹测绘雷达）、`/settings`（中/日/英切换、棘轮声效开关、渲染档位、JSON 备份导入导出、回收站恢复）。
 
 ---
 

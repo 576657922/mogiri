@@ -115,12 +115,36 @@ export function groupTicketsByYearMonth(
 export type RecapStats = {
   totalTickets: number;
   byType: Partial<Record<TicketType, number>>;
+  byMonth: number[];
   spendByCurrency: Record<string, number>;
   topVenues: { name: string; count: number; city?: string }[];
   cities: string[];
   tornCount: number;
   averageRating: number | null;
 };
+
+/**
+ * 计算球面大圆航线累计里程（公里，Haversine 公式），用于足迹测绘仪。
+ */
+export function computeJourneyDistanceKm(points: { lat: number; lng: number }[]): number {
+  if (points.length < 2) return 0;
+  const R = 6371;
+  let total = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i];
+    const b = points[i + 1];
+    if (!a || !b) continue;
+    const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+    const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+    const sinLat = Math.sin(dLat / 2);
+    const sinLng = Math.sin(dLng / 2);
+    const h =
+      sinLat * sinLat +
+      Math.cos((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * sinLng * sinLng;
+    total += 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+  }
+  return Math.round(total);
+}
 
 /**
  * 计算年度回顾与统计数据（SHARE-04）。
@@ -136,6 +160,7 @@ export function computeRecapStats(
   });
 
   const byType: Partial<Record<TicketType, number>> = {};
+  const byMonth: number[] = Array.from({ length: 12 }, () => 0);
   const spendByCurrency: Record<string, number> = {};
   const venueCounts = new Map<string, { name: string; count: number; city?: string }>();
   const citySet = new Set<string>();
@@ -145,6 +170,8 @@ export function computeRecapStats(
 
   for (const t of scoped) {
     byType[t.type] = (byType[t.type] ?? 0) + 1;
+    const monthIdx = Math.max(0, Math.min(11, getYearMonthKey(t.eventAt).month - 1));
+    byMonth[monthIdx] = (byMonth[monthIdx] ?? 0) + 1;
     if (t.priceAmount !== undefined && t.priceAmount > 0) {
       const cur = (t.priceCurrency ?? 'JPY').toUpperCase();
       spendByCurrency[cur] = (spendByCurrency[cur] ?? 0) + t.priceAmount;
@@ -176,6 +203,7 @@ export function computeRecapStats(
   return {
     totalTickets: scoped.length,
     byType,
+    byMonth,
     spendByCurrency,
     topVenues,
     cities: Array.from(citySet),

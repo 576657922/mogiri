@@ -1,11 +1,12 @@
 @import "tailwindcss";
 
 /*
- * 半券 Hanken — Concept C: Dieter Rams Braun / Tactile Rolodex Design System
- * - 工业级暖灰铝合金/石质台面（#e6e6e1 径向漫射光）
- * - 模切齿孔特种卡纸票面（#f2f2ed）与五色叠卡顶边
- * - 拟物金属滚花拨轮（Knurled Thumbwheel）+ 朱红指针刻度尺
- * - 底部悬浮磨砂胶囊控制坞（Frosted Pill Dock）
+ * 半券 Hanken — FWA Edition: Archival Precision Instrument
+ * Dieter Rams Braun × Japanese Letterpress Stationery Craft
+ * - 阳极氧化暖石金属台面（#e6e5df 漫射柔光 + 0.026 微米级纸石肌理噪点）
+ * - 三重排版声部：Inter 瑞士无衬线 + Instrument/Noto 高对比典藏衬线 + JetBrains 等宽游标读数
+ * - 机械切削高光面板（.archival-card）与内凹卡槽底座（.recessed-plinth）
+ * - 三档暗房光学舞台（黑曜暗房 / 暖石台面 / 午夜丝绒）
  */
 
 @theme inline {
@@ -23,6 +24,7 @@
   --font-display: var(--font-sans-stack);
   --font-sans: var(--font-sans-stack);
   --font-mono: var(--font-mono-stack);
+  --font-serif: var(--font-serif-stack);
 }
 
 @theme {
@@ -31,20 +33,23 @@
 }
 
 :root {
-  --bg: #e6e6e1;
-  --bg-raised: #f3f3ee;
-  --bg-subtle: #dadad4;
+  --bg: #e6e5df;
+  --bg-raised: #f5f4ef;
+  --bg-subtle: #dbd9d1;
   --fg: #141413;
-  --muted: #666660;
-  --faint: #989890;
-  --line: rgb(20 20 19 / 0.08);
-  --line-strong: rgb(20 20 19 / 0.18);
-  --accent: #d94832;
+  --muted: #5f5e58;
+  --faint: #8e8d85;
+  --line: rgb(20 20 19 / 0.085);
+  --line-strong: rgb(20 20 19 / 0.19);
+  --accent: #d64c35;
   --accent-ink: #ffffff;
 
   --font-sans-stack:
     "Inter Variable", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans",
     "Noto Sans CJK SC", system-ui, sans-serif;
+  --font-serif-stack:
+    "Instrument Serif", "Noto Serif JP", "Noto Serif SC", "Hiragino Mincho ProN", "Songti SC",
+    Georgia, serif;
   --font-mono-stack: "JetBrains Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
 
   color-scheme: light;
@@ -59,13 +64,27 @@
 
   body {
     margin: 0;
-    background: radial-gradient(75% 70% at 50% 42%, #efefe9 0%, #e5e5df 58%, #dadad3 100%);
+    background: radial-gradient(68% 64% at 50% 38%, #f1f0ea 0%, #e6e5df 58%, #d9d8d0 100%);
     background-attachment: fixed;
     color: var(--fg);
     font-family: var(--font-sans-stack);
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    position: relative;
+  }
+
+  /* 微米级阳极氧化铝 / 特种棉纸肌理层（纯内联 SVG 分形噪点，零网络请求） */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    pointer-events: none;
+    opacity: 0.028;
+    mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-size: 180px 180px;
   }
 
   ::selection {
@@ -74,7 +93,7 @@
   }
 
   :focus-visible {
-    outline: 2px solid rgb(20 20 19 / 0.28);
+    outline: 2px solid rgb(214 76 53 / 0.55);
     outline-offset: 2px;
   }
 
@@ -94,11 +113,22 @@
 }
 
 @layer components {
+  .font-editorial {
+    font-family: var(--font-serif-stack);
+    font-feature-settings:
+      "liga" 1,
+      "kern" 1;
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
   .label {
     font-family: var(--font-mono-stack);
-    font-size: 11px;
+    font-size: 10.5px;
     line-height: 1.3;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--muted);
     font-weight: 500;
@@ -108,22 +138,42 @@
     font-family: var(--font-sans-stack);
     font-weight: 600;
     letter-spacing: -0.03em;
-    line-height: 1.12;
+    line-height: 1.1;
+  }
+
+  /* 精密仪器卡片壳体：顶部 1px 切削白边 + 柔和暖灰接触阴影 */
+  .archival-card {
+    background: linear-gradient(180deg, #f7f6f2 0%, #f2f1eb 100%);
+    border: 1px solid rgb(20 20 19 / 0.085);
+    box-shadow:
+      0 12px 28px -10px rgb(20 20 18 / 0.07),
+      0 2px 6px -1px rgb(20 20 18 / 0.04),
+      inset 0 1px 0 rgb(255 255 255 / 0.88);
+  }
+
+  /* 桌面内凹收藏托盘（用于首页叠卡底座与制票打样垫板） */
+  .recessed-plinth {
+    background: linear-gradient(180deg, rgb(20 20 18 / 0.035) 0%, rgb(20 20 18 / 0.015) 100%);
+    border: 1px solid rgb(20 20 18 / 0.065);
+    box-shadow:
+      inset 0 2px 6px rgb(20 20 18 / 0.055),
+      0 1px 0 rgb(255 255 255 / 0.72);
   }
 
   .field {
     width: 100%;
-    background: var(--bg-subtle);
-    border: 1px solid transparent;
+    background: #e5e3dc;
+    border: 1px solid rgb(20 20 19 / 0.06);
     border-radius: 12px;
     padding: 9px 13px;
-    font-size: 14px;
+    font-size: 13.5px;
     line-height: 1.45;
     color: var(--fg);
+    box-shadow: inset 0 1px 2px rgb(20 20 18 / 0.04);
     transition:
-      background-color 0.2s ease,
-      border-color 0.2s ease,
-      box-shadow 0.2s ease;
+      background-color 0.18s ease,
+      border-color 0.18s ease,
+      box-shadow 0.18s ease;
   }
 
   .field::placeholder {
@@ -131,51 +181,54 @@
   }
 
   .field:hover {
-    background: #d2d2cc;
+    background: #dedcd4;
   }
 
   .field:focus {
     outline: none;
     background: var(--bg-raised);
     border-color: var(--line-strong);
-    box-shadow: 0 0 0 3px rgb(20 20 19 / 0.05);
+    box-shadow:
+      0 0 0 3px rgb(20 20 19 / 0.055),
+      inset 0 1px 0 rgb(255 255 255 / 0.8);
   }
 
   .field[data-low="true"] {
     border-color: var(--accent);
-    background: rgb(217 72 50 / 0.07);
+    background: rgb(214 76 53 / 0.075);
   }
 
-  /* Concept C 标志性的左下深邃漫射投影 */
+  /* 标志性左下深邃漫射投影 */
   .rolodex-shadow {
     filter: drop-shadow(-24px 30px 32px rgb(20 20 18 / 0.2))
       drop-shadow(-6px 10px 14px rgb(20 20 18 / 0.1)) drop-shadow(0 1px 2px rgb(20 20 18 / 0.08));
   }
 
   .stub-shadow {
-    filter: drop-shadow(-14px 20px 26px rgb(20 20 18 / 0.16))
-      drop-shadow(0 4px 10px rgb(20 20 18 / 0.08));
+    filter: drop-shadow(-12px 18px 22px rgb(20 20 18 / 0.16))
+      drop-shadow(0 3px 8px rgb(20 20 18 / 0.08));
   }
 
-  /* 底部悬浮磨砂胶囊控制坞（Concept C 1:1 复刻） */
+  /* 底部悬浮磨砂胶囊控制坞（精工玻璃金属倒角） */
   .frosted-dock {
-    background: linear-gradient(180deg, rgb(236 236 231 / 0.88) 0%, rgb(222 222 216 / 0.84) 100%);
-    backdrop-filter: blur(20px) saturate(140%);
-    -webkit-backdrop-filter: blur(20px) saturate(140%);
-    border: 1px solid rgb(255 255 255 / 0.72);
+    background: linear-gradient(180deg, rgb(242 241 236 / 0.88) 0%, rgb(225 224 217 / 0.85) 100%);
+    backdrop-filter: blur(22px) saturate(150%);
+    -webkit-backdrop-filter: blur(22px) saturate(150%);
+    border: 1px solid rgb(255 255 255 / 0.78);
     box-shadow:
-      0 14px 32px -6px rgb(20 20 18 / 0.14),
-      0 3px 8px -2px rgb(20 20 18 / 0.08),
-      inset 0 1px 0.5px rgb(255 255 255 / 0.9);
+      0 18px 38px -8px rgb(20 20 18 / 0.16),
+      0 4px 10px -2px rgb(20 20 18 / 0.08),
+      0 0 0 1px rgb(20 20 18 / 0.05),
+      inset 0 1px 0.5px rgb(255 255 255 / 0.95);
   }
 
   /* 博朗金属滚轮凹槽 */
   .wheel-trough {
-    background: linear-gradient(90deg, #c5c5be 0%, #d8d8d2 55%, #e6e6e0 100%);
+    background: linear-gradient(90deg, #c2c1b9 0%, #d8d7d0 55%, #e7e6df 100%);
     box-shadow:
       inset 2px 3px 5px rgb(0 0 0 / 0.22),
-      inset -1px -1px 2px rgb(255 255 255 / 0.7),
-      0 1px 0 rgb(255 255 255 / 0.8);
+      inset -1px -1px 2px rgb(255 255 255 / 0.75),
+      0 1px 0 rgb(255 255 255 / 0.85);
   }
 
   /* 拟物金属滚花转轮（Knurled Metallic Wheel） */
@@ -183,21 +236,21 @@
     background-image:
       repeating-linear-gradient(
         180deg,
-        rgb(255 255 255 / 0.55) 0px,
-        rgb(255 255 255 / 0.55) 1.2px,
-        rgb(45 45 42 / 0.55) 1.2px,
-        rgb(45 45 42 / 0.55) 2.8px,
-        rgb(210 210 204 / 0.35) 2.8px,
-        rgb(210 210 204 / 0.35) 4px
+        rgb(255 255 255 / 0.58) 0px,
+        rgb(255 255 255 / 0.58) 1.2px,
+        rgb(42 42 39 / 0.58) 1.2px,
+        rgb(42 42 39 / 0.58) 2.8px,
+        rgb(210 210 204 / 0.36) 2.8px,
+        rgb(210 210 204 / 0.36) 4px
       ),
       linear-gradient(
         180deg,
-        #52524e 0%,
+        #4f4f4b 0%,
         #b8b8b2 16%,
-        #f4f4f0 42%,
+        #f5f5f1 42%,
         #d8d8d2 58%,
-        #787872 86%,
-        #2c2c29 100%
+        #767670 86%,
+        #2a2a27 100%
       );
     background-size:
       100% 4px,
@@ -205,14 +258,42 @@
     box-shadow:
       -3px 6px 10px rgb(0 0 0 / 0.32),
       0 1px 2px rgb(0 0 0 / 0.4),
-      inset 0 1px 1px rgb(255 255 255 / 0.8);
+      inset 0 1px 1px rgb(255 255 255 / 0.82);
   }
 
-  /* 3D 检视室舞台 */
-  .spotlight {
+  /* 3D 光学检视室舞台三档主题 */
+  .spotlight,
+  .stage-obsidian {
     background:
-      radial-gradient(60% 55% at 50% 42%, rgb(255 248 235 / 0.14), transparent 72%),
-      linear-gradient(180deg, #1b1b19 0%, #111110 100%);
+      radial-gradient(62% 58% at 50% 42%, rgb(255 246 230 / 0.14), transparent 72%),
+      radial-gradient(circle at 50% 50%, rgb(255 255 255 / 0.03) 1px, transparent 1px),
+      linear-gradient(180deg, #1b1b19 0%, #0f0f0e 100%);
+    background-size:
+      100% 100%,
+      24px 24px,
+      100% 100%;
+  }
+
+  .stage-limestone {
+    background:
+      radial-gradient(64% 58% at 50% 40%, rgb(255 255 255 / 0.72), transparent 74%),
+      radial-gradient(circle at 50% 50%, rgb(20 20 18 / 0.045) 1px, transparent 1px),
+      linear-gradient(180deg, #e5e3dc 0%, #d4d1c8 100%);
+    background-size:
+      100% 100%,
+      24px 24px,
+      100% 100%;
+  }
+
+  .stage-velvet {
+    background:
+      radial-gradient(60% 56% at 50% 42%, rgb(214 76 53 / 0.16), transparent 72%),
+      radial-gradient(circle at 50% 50%, rgb(255 245 235 / 0.035) 1px, transparent 1px),
+      linear-gradient(180deg, #211819 0%, #120d0e 100%);
+    background-size:
+      100% 100%,
+      24px 24px,
+      100% 100%;
   }
 
   .range {
@@ -227,7 +308,8 @@
   .range::-webkit-slider-runnable-track {
     height: 4px;
     border-radius: 999px;
-    background: rgb(255 255 255 / 0.2);
+    background: currentColor;
+    opacity: 0.25;
   }
 
   .range::-webkit-slider-thumb {
@@ -236,8 +318,9 @@
     height: 14px;
     margin-top: -5px;
     border-radius: 999px;
-    background: #ffffff;
-    box-shadow: 0 1px 4px rgb(0 0 0 / 0.45);
+    background: #d64c35;
+    border: 2px solid #ffffff;
+    box-shadow: 0 1px 4px rgb(0 0 0 / 0.4);
   }
 
   .no-scrollbar {
@@ -247,4 +330,26 @@
   .no-scrollbar::-webkit-scrollbar {
     display: none;
   }
+}
+
+@keyframes pulse-halo {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.45;
+  }
+  50% {
+    transform: scale(1.45);
+    opacity: 0.12;
+  }
+}
+
+@keyframes dash-march {
+  to {
+    stroke-dashoffset: -12;
+  }
+}
+
+.animate-dash-march {
+  animation: dash-march 14s linear infinite;
 }

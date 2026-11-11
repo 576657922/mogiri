@@ -1,5 +1,11 @@
 import { renderThumbnailDataUrl } from '@mogiri/renderer';
-import { createTicket, db as defaultDb, type MogiriDB, type TicketCreateInput } from '../data';
+import {
+  createTicket,
+  db as defaultDb,
+  type MogiriDB,
+  type TicketCreateInput,
+  type TicketRecord,
+} from '../data';
 import { toTicketSpec } from './ticket-spec';
 
 const SEED_META_KEY = 'seed_v1_done';
@@ -177,9 +183,20 @@ export async function ensureSeedTickets(database: MogiriDB = defaultDb): Promise
     return;
   }
 
-  for (const sample of INITIAL_SAMPLE_TICKETS) {
-    const created = await createTicket(sample, database);
-    if (typeof document !== 'undefined') {
+  // 第一阶段：在单个原子事务内批量写入全部示例票据，使首页五色叠卡首帧一次性完整呈现（零逐张闪烁）
+  const createdRecords: TicketRecord[] = [];
+  await database.transaction('rw', [database.tickets, database.outbox, database.meta], async () => {
+    for (const sample of INITIAL_SAMPLE_TICKETS) {
+      const created = await createTicket(sample, database);
+      createdRecords.push(created);
+    }
+    await database.meta.put({ key: SEED_META_KEY, value: true });
+  });
+
+  // 第二阶段：在浏览器空闲帧渐进补齐预渲染缩略图，不阻塞首屏交互
+  if (typeof document !== 'undefined') {
+    for (const created of createdRecords) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
       try {
         const thumbDataUrl = renderThumbnailDataUrl(toTicketSpec(created), 560);
         await database.tickets.update(created.id, { thumbDataUrl });
@@ -188,5 +205,4 @@ export async function ensureSeedTickets(database: MogiriDB = defaultDb): Promise
       }
     }
   }
-  await database.meta.put({ key: SEED_META_KEY, value: true });
 }
