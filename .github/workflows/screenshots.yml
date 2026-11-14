@@ -1,0 +1,85 @@
+name: README 截图
+
+# 手动运行：启动渲染器演示页和主应用，用无头 Chrome（SwiftShader 软件渲染 WebGL）截图，提交到 docs/screenshots/。
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  screenshots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装中日文字体
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 安装依赖
+        run: npx -y pnpm@10 install --frozen-lockfile
+
+      - name: 截图
+        run: |
+          (cd packages/renderer && nohup npx vite --config playground/vite.config.ts --port 5174 --strictPort > /tmp/renderer.log 2>&1 &)
+          (cd apps/app && nohup npx vite --port 5180 --strictPort > /tmp/app.log 2>&1 &)
+          for i in $(seq 1 90); do
+            curl -sf http://localhost:5174/ > /dev/null && curl -sf http://localhost:5180/ > /dev/null && break
+            sleep 1
+          done
+          mkdir -p /tmp/shots
+          cd /tmp/shots
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund playwright@1.65.1 > /dev/null
+          cat > shots.mjs <<'EOF'
+          import { chromium } from 'playwright';
+          import { mkdirSync } from 'node:fs';
+          const out = `${process.env.GITHUB_WORKSPACE}/docs/screenshots`;
+          mkdirSync(out, { recursive: true });
+          const browser = await chromium.launch({
+            channel: 'chrome',
+            args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'],
+          });
+          async function shot(url, file, { width, height, mobile = false, locale } = {}) {
+            const ctx = await browser.newContext({
+              viewport: { width, height },
+              deviceScaleFactor: 2,
+              isMobile: mobile,
+              hasTouch: mobile,
+              reducedMotion: 'reduce',
+            });
+            if (locale) await ctx.addInitScript((l) => localStorage.setItem('mogiri_locale', l), locale);
+            const page = await ctx.newPage();
+            await page.goto(url, { waitUntil: 'networkidle' });
+            await page.evaluate(() => document.fonts.ready);
+            await page.waitForTimeout(4000);
+            await page.screenshot({ path: `${out}/${file}`, type: 'jpeg', quality: 85 });
+            await ctx.close();
+          }
+          // 渲染器演示页：0 演唱会，1 JR，2 登机牌；ui=0 隐藏控制面板
+          for (const [i, name] of [[0, 'concert'], [1, 'jr'], [2, 'boarding']]) {
+            await shot(`http://localhost:5174/?ticket=${i}&tiltX=0.3&tiltY=0.2&quality=high&flipped=0&ui=0`, `ticket-${name}.jpg`, { width: 1280, height: 800 });
+          }
+          // 主应用首页（首次启动自动写入虚构的示例票根），三种界面语言
+          for (const locale of ['zh-CN', 'ja', 'en']) {
+            await shot('http://localhost:5180/', `archive-${locale}.jpg`, { width: 390, height: 844, mobile: true, locale });
+          }
+          await browser.close();
+          EOF
+          node shots.mjs
+
+      - name: 提交截图（无变化则跳过）
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/screenshots
+          git diff --cached --quiet || {
+            git commit -m "docs: 更新 README 截图"
+            git push
+          }
